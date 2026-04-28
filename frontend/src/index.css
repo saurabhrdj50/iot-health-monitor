@@ -1,0 +1,206 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --status-normal: #22c55e;
+  --status-stress: #f59e0b;
+  --status-risk: #f43f5e;
+  --panel-border: rgba(255, 255, 255, 0.08);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: 'Manrope', ui-sans-serif, system-ui, sans-serif;
+  background: #07131a;
+  color: #f8fafc;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+select {
+  font: inherit;
+}
+
+@layer components {
+  .glass-panel {
+    @apply border border-white/10 bg-white/[0.055] shadow-[0_20px_70px_rgba(3,8,15,0.35)] backdrop-blur-2xl;
+  }
+
+  .metric-card {
+    @apply rounded-[26px] border border-white/[0.08] bg-black/[0.15] p-5 transition duration-300 hover:-translate-y-1 hover:border-cyan-300/[0.25] hover:bg-white/[0.06];
+  }
+
+  .control-chip {
+    @apply inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-2 text-sm text-slate-200 backdrop-blur-xl;
+  }
+
+  .icon-button {
+    @apply inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-black/20 text-slate-100 transition duration-300 hover:-translate-y-0.5 hover:border-cyan-300/30 hover:bg-white/[0.06];
+  }
+
+  .connection-badge {
+    @apply inline-flex items-center gap-2 rounded-full border px-3 py-2 text-sm backdrop-blur-xl;
+  }
+
+  .connection-live {
+    @apply border-emerald-400/[0.30] bg-emerald-500/[0.12] text-emerald-100;
+  }
+
+  .connection-offline {
+    @apply border-rose-400/[0.30] bg-rose-500/[0.12] text-rose-100;
+  }
+
+  .status-pill {
+    @apply inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em];
+  }
+
+  .status-pill-normal {
+    background: rgba(34, 197, 94, 0.14);
+    color: #bbf7d0;
+    border: 1px solid rgba(34, 197, 94, 0.24);
+  }
+
+  .status-pill-stress {
+    background: rgba(245, 158, 11, 0.14);
+    color: #fde68a;
+    border: 1px solid rgba(245, 158, 11, 0.26);
+  }
+
+  .status-pill-risk {
+    background: rgba(244, 63, 94, 0.14);
+    color: #fecdd3;
+    border: 1px solid rgba(244, 63, 94, 0.26);
+  }
+
+  .status-panel-normal {
+    background: radial-gradient(circle at top, rgba(34, 197, 94, 0.14), rgba(255, 255, 255, 0.02) 58%);
+  }
+
+  .status-panel-stress {
+    background: radial-gradient(circle at top, rgba(245, 158, 11, 0.16), rgba(255, 255, 255, 0.02) 58%);
+  }
+
+  .status-panel-risk {
+    background: radial-gradient(circle at top, rgba(244, 63, 94, 0.17), rgba(255, 255, 255, 0.02) 58%);
+  }
+}
+
+.status-orb-shell {
+  display: grid;
+  gap: 1rem;
+  border-radius: 28px;
+  border: 1px solid var(--panel-border);
+  padding: 1.25rem;
+}
+
+.status-orb {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 250px;
+  overflow: hidden;
+  border-radius: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(2, 6, 23, 0.28);
+}
+
+.status-orb::before,
+.status-orb::after {
+  content: '';
+  position: absolute;
+  inset: 12%;
+  border-radius: 999px;
+  animation: orbitPulse 2.8s ease-in-out infinite;
+}
+
+.status-ring-normal::before,
+.status-ring-normal::after {
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  box-shadow: 0 0 40px rgba(34, 197, 94, 0.16);
+}
+
+.status-ring-stress::before,
+.status-ring-stress::after {
+  border: 1px solid rgba(245, 158, 11, 0.34);
+  box-shadow: 0 0 44px rgba(245, 158, 11, 0.18);
+}
+
+.status-ring-risk::before,
+.status-ring-risk::after {
+  border: 1px solid rgba(244, 63, 94, 0.36);
+  box-shadow: 0 0 56px rgba(244, 63, 94, 0.24);
+  animation-duration: 1.8s;
+}
+
+.status-orb::after {
+  inset: 4%;
+  animation-delay: 0.75s;
+}
+
+.status-orb-inner {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  min-height: 168px;
+  width: min(100%, 220px);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: radial-gradient(circle at top, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04) 56%, rgba(255, 255, 255, 0.02));
+  text-align: center;
+  backdrop-filter: blur(16px);
+}
+
+@keyframes orbitPulse {
+  0%,
+  100% {
+    transform: scale(0.95);
+    opacity: 0.45;
+  }
+  50% {
+    transform: scale(1.04);
+    opacity: 1;
+  }
+}
+
+@media (max-width: 640px) {
+  .status-orb {
+    min-height: 210px;
+  }
+
+  .status-orb-inner {
+    min-height: 148px;
+    width: min(100%, 188px);
+  }
+}

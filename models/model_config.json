@@ -1,0 +1,38 @@
+{
+  "feature_columns": [
+    "heart_rate",
+    "respiratory_rate",
+    "body_temperature",
+    "spo2",
+    "health_index",
+    "stress_indicator",
+    "hr_deviation",
+    "spo2_deficit",
+    "temp_deviation",
+    "rr_deviation",
+    "abnormal_flags"
+  ],
+  "label_mapping": {
+    "0": "Normal",
+    "1": "Stress",
+    "2": "Risk"
+  },
+  "label_reverse": {
+    "Normal": 0,
+    "Stress": 1,
+    "Risk": 2
+  },
+  "baseline_stats": {
+    "hr_mean": 75.0,
+    "hr_std": 15.0,
+    "spo2_normal": 98.0,
+    "temp_normal": 36.8,
+    "rr_normal": 16.0
+  },
+  "model_classes": [
+    0,
+    1,
+    2
+  ],
+  "trained_at": "2026-04-28T15:01:49.486499"
+}
