@@ -1,7 +1,17 @@
 node_modules/
 .venv/
+.venv312/
 .deps/
 __pycache__/
 *.pyc
+*.pyo
 models/*.pkl
 .env
+.env.local
+*.sqlite
+*.db
+frontend/build/
+frontend/build_output.log
+arduino/health_monitor/secrets.h
+*.log
+.DS_Store

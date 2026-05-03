@@ -1,631 +1,973 @@
-import React, { useEffect, useState } from 'react';
+import React, { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { AlertCircle, BellRing, Download, FileText, Loader2, Radio, Settings, ShieldAlert, UserCog, Users } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
+
+import AdminControlsPanel from './components/dashboard/AdminControlsPanel';
+import AlertsPanel from './components/dashboard/AlertsPanel';
+import DecisionSupportPanel from './components/dashboard/DecisionSupportPanel';
+import EventTimeline from './components/dashboard/EventTimeline';
+import HandoffSummaryPanel from './components/dashboard/HandoffSummaryPanel';
+import HeroPanel from './components/dashboard/HeroPanel';
+import InsightsPanel from './components/dashboard/InsightsPanel';
+import KpiCard from './components/dashboard/KpiCard';
+import NotesPanel from './components/dashboard/NotesPanel';
+import PatientSidebar from './components/dashboard/PatientSidebar';
+import RecommendationsPanel from './components/dashboard/RecommendationsPanel';
+import TelemetryChartPanel from './components/dashboard/TelemetryChartPanel';
+import TelemetryTable from './components/dashboard/TelemetryTable';
+import TopStrip from './components/dashboard/TopStrip';
+import WardMapPanel from './components/dashboard/WardMapPanel';
+import WardOverviewPanel from './components/dashboard/WardOverviewPanel';
+import ConfirmModal from './components/ui/ConfirmModal';
+import { KpiSkeletons, PanelSkeleton } from './components/ui/Skeletons';
+import ToastStack from './components/ui/ToastStack';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import {
-  Activity,
-  AlertTriangle,
-  Clock3,
-  Heart,
-  Loader2,
-  RefreshCw,
-  ServerCrash,
-  ShieldCheck,
-  Thermometer,
-  Waves,
-  Wifi,
-  WifiOff,
-  Wind,
-} from 'lucide-react';
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  Cell,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
+  API_BASE,
+  WS_BASE,
+  buildAlerts,
+  buildDeviceDiagnostics,
+  buildHandoffSummary,
+  buildInsights,
+  buildReferenceKpis,
+  buildRecommendations,
+  buildReportRows,
+  buildTimeline,
+  buildWardZones,
+  cardMotion,
+  emptyDashboard,
+  formatDate,
+  getRiskTone,
+  initialPatientForm,
+  themeModes,
+} from './lib/dashboard';
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
-const POLL_OPTIONS = [3000, 5000, 10000, 15000];
+async function requestJson(path, options = {}) {
+  const response = await fetch(`${API_BASE}${path}`, options);
+  const contentType = response.headers.get('content-type') || '';
+  const payload = contentType.includes('application/json')
+    ? await response.json()
+    : { detail: await response.text() };
 
-const EMPTY_PROBABILITY = { Normal: 0, Stress: 0, Risk: 0 };
+  if (!response.ok) {
+    throw new Error(
+      payload.detail ||
+      payload.error ||
+      payload.message ||
+      `Request failed with status ${response.status}`
+    );
+  }
 
-const DEFAULT_SNAPSHOT = {
-  latest: null,
-  history: [],
-  source: 'waiting_for_data',
-  model_loaded: false,
-  updated_at: null,
-};
+  return payload;
+}
 
-const STATUS_META = {
-  Normal: {
-    accent: 'var(--status-normal)',
-    pill: 'status-pill-normal',
-    ring: 'status-ring-normal',
-    panel: 'status-panel-normal',
-    glow: 'shadow-[0_0_40px_rgba(34,197,94,0.16)]',
-    label: 'Stable',
-  },
-  Stress: {
-    accent: 'var(--status-stress)',
-    pill: 'status-pill-stress',
-    ring: 'status-ring-stress',
-    panel: 'status-panel-stress',
-    glow: 'shadow-[0_0_44px_rgba(245,158,11,0.18)]',
-    label: 'Elevated',
-  },
-  Risk: {
-    accent: 'var(--status-risk)',
-    pill: 'status-pill-risk',
-    ring: 'status-ring-risk',
-    panel: 'status-panel-risk',
-    glow: 'shadow-[0_0_52px_rgba(244,63,94,0.2)]',
-    label: 'Critical',
-  },
-};
+function pushToast(setToasts, tone, title, body = '') {
+  const id = `${Date.now()}-${Math.random()}`;
+  setToasts((current) => [...current, { id, tone, title, body }]);
+  window.setTimeout(() => {
+    setToasts((current) => current.filter((toast) => toast.id !== id));
+  }, 3800);
+}
 
-function App() {
-  const [snapshot, setSnapshot] = useState(DEFAULT_SNAPSHOT);
-  const [health, setHealth] = useState({ status: 'unknown', model_loaded: false });
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [error, setError] = useState('');
-  const [pollInterval, setPollInterval] = useState(5000);
+function getRouteFromHash() {
+  const raw = window.location.hash.replace('#/', '').trim();
+  return raw || 'dashboard';
+}
 
-  const fetchDashboard = async ({ silent = false } = {}) => {
-    if (silent) {
-      setIsRefreshing(true);
-    } else {
-      setIsLoading(true);
-    }
-    setError('');
+export default function App() {
+  const [patients, setPatients] = useState([]);
+  const [overviewPatients, setOverviewPatients] = useState([]);
+  const [selectedPatientId, setSelectedPatientId] = useState(null);
+  const [dashboard, setDashboard] = useState(emptyDashboard);
+  const [health, setHealth] = useState({ status: 'unknown', realtime_status: 'checking', telemetry_polling: false });
+  const [search, setSearch] = useState('');
+  const deferredSearch = useDeferredValue(search);
+  const [feedbackState, setFeedbackState] = useState({ sending: false, sent: false });
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [showAdmitForm, setShowAdmitForm] = useState(false);
+  const [patientForm, setPatientForm] = useState(initialPatientForm);
+  const [savingPatient, setSavingPatient] = useState(false);
+  const [savingManagedPatient, setSavingManagedPatient] = useState(false);
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [adminToken, setAdminToken] = useState('');
+  const [resetting, setResetting] = useState(false);
+  const [metric, setMetric] = useState('heart_rate');
+  const [compareMode, setCompareMode] = useState(false);
+  const [compareMetric, setCompareMetric] = useState('spo2');
+  const [themeMode, setThemeMode] = useState('command');
+  const [toasts, setToasts] = useState([]);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [acknowledgedAlerts, setAcknowledgedAlerts] = useState([]);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [route, setRoute] = useState(() => getRouteFromHash());
+  const [activityLog, setActivityLog] = useState([]);
+  const [managePatientForm, setManagePatientForm] = useState(initialPatientForm);
+
+  const selectedPatient =
+    patients.find((patient) => patient.id === selectedPatientId) ||
+    dashboard.patient ||
+    patients.find((patient) => patient.active) ||
+    null;
+
+  const pushActivity = useCallback((entry) => {
+    setActivityLog((current) => [
+      {
+        id: `${Date.now()}-${Math.random()}`,
+        timestamp: new Date().toISOString(),
+        ...entry,
+      },
+      ...current,
+    ].slice(0, 20));
+  }, []);
+
+  useEffect(() => {
+    setNoteDraft(selectedPatient?.notes || '');
+    setManagePatientForm({
+      name: selectedPatient?.name || '',
+      age: selectedPatient?.age ?? '',
+      dob: selectedPatient?.dob || '',
+      admitted: selectedPatient?.admitted || '',
+      doctor: selectedPatient?.doctor || '',
+      room: selectedPatient?.room || '',
+      notes: selectedPatient?.notes || '',
+    });
+  }, [selectedPatient?.id, selectedPatient?.notes, selectedPatient?.name, selectedPatient?.age, selectedPatient?.dob, selectedPatient?.admitted, selectedPatient?.doctor, selectedPatient?.room]);
+
+  const filteredPatients = useMemo(() => {
+    const query = deferredSearch.toLowerCase();
+    return patients.filter((patient) => {
+      const haystack = `${patient.name} ${patient.room || ''} ${patient.doctor || ''}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [patients, deferredSearch]);
+
+  const latest = dashboard.latest;
+  const history = useMemo(() => {
+    return dashboard.history.map((item) => ({
+      ...item,
+      timeLabel: new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    }));
+  }, [dashboard.history]);
+
+  const alerts = useMemo(() => buildAlerts(dashboard), [dashboard]);
+  const insights = useMemo(() => buildInsights(dashboard.history, latest, selectedPatient), [dashboard.history, latest, selectedPatient]);
+  const recommendations = useMemo(() => buildRecommendations(dashboard.history, latest), [dashboard.history, latest]);
+  const timelineItems = useMemo(() => buildTimeline({ dashboard, patient: selectedPatient, alerts, activity: activityLog }), [dashboard, selectedPatient, alerts, activityLog]);
+  const kpis = useMemo(() => buildReferenceKpis(latest), [latest]);
+  const diagnostics = useMemo(() => buildDeviceDiagnostics({ latest, dashboard, health, overviewPatients }), [latest, dashboard, health, overviewPatients]);
+  const handoffSummary = useMemo(() => buildHandoffSummary({ patient: selectedPatient, latest, insights, alerts, noteDraft }), [selectedPatient, latest, insights, alerts, noteDraft]);
+  const wardZones = useMemo(() => buildWardZones(overviewPatients), [overviewPatients]);
+  const activeTone = getRiskTone(latest?.prediction);
+  const backendConnected = health.status === 'healthy';
+  const connectionMessage = backendConnected
+    ? (latest ? 'Backend connected and patient telemetry is live.' : 'Backend connected. Waiting for the next telemetry sample.')
+    : `Backend unavailable at ${API_BASE}. Start the API or update REACT_APP_API_URL.`;
+  const wardRiskBanner = useMemo(() => {
+    const criticalPatients = overviewPatients
+      .filter((p) => p.latest_prediction === 'Risk')
+      .map((p) => ({ id: p.id, name: p.name, room: p.room }));
+    const stressPatients = overviewPatients
+      .filter((p) => p.latest_prediction === 'Stress')
+      .map((p) => ({ id: p.id, name: p.name, room: p.room }));
+    return { critical: criticalPatients, stress: stressPatients };
+  }, [overviewPatients]);
+
+  useEffect(() => {
+    const onHashChange = () => setRoute(getRouteFromHash());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  const fetchHealth = useCallback(async () => {
+    return requestJson('/api/v1/health');
+  }, []);
+
+  const loadPatients = useCallback(async () => {
+    const data = await requestJson('/api/v1/patients');
+    setPatients(data.patients || []);
+    setSelectedPatientId((current) => current || data.active_patient_id || data.patients?.[0]?.id || null);
+    return data;
+  }, []);
+
+  const loadOverview = useCallback(async () => {
+    const data = await requestJson('/api/v1/patients/overview');
+    setOverviewPatients(data.patients || []);
+  }, []);
+
+  const loadDashboard = useCallback(async (patientId, { silent = false } = {}) => {
+    if (!patientId) return;
+    if (silent) setRefreshing(true);
+    else setLoading(true);
 
     try {
-      const [dashboardResponse, healthResponse] = await Promise.all([
-        fetch(`${API_BASE}/api/v1/dashboard?limit=24`),
-        fetch(`${API_BASE}/api/v1/health`),
+      const [dashboardRes, healthData] = await Promise.all([
+        requestJson(`/api/v1/dashboard?limit=24&patient_id=${patientId}`),
+        fetchHealth(),
       ]);
-
-      if (!dashboardResponse.ok) {
-        throw new Error(`Dashboard request failed with status ${dashboardResponse.status}`);
-      }
-      if (!healthResponse.ok) {
-        throw new Error(`Health request failed with status ${healthResponse.status}`);
-      }
-
-      const [dashboardData, healthData] = await Promise.all([
-        dashboardResponse.json(),
-        healthResponse.json(),
-      ]);
-
-      setSnapshot({
+      const dashboardData = dashboardRes;
+      setDashboard({
+        patient: dashboardData.patient,
         latest: dashboardData.latest,
         history: dashboardData.history || [],
         source: dashboardData.source,
         model_loaded: dashboardData.model_loaded,
         updated_at: dashboardData.updated_at,
+        monitoring_patient_id: dashboardData.monitoring_patient_id,
+        feedback_summary: dashboardData.feedback_summary || {},
       });
-      setHealth(healthData);
-    } catch (fetchError) {
-      setError(fetchError.message || 'Unable to connect to backend.');
-      setSnapshot(DEFAULT_SNAPSHOT);
-      setHealth({ status: 'offline', model_loaded: false });
+      setHealth((current) => ({
+        ...current,
+        ...healthData,
+        status: 'healthy',
+      }));
+      setErrorMessage('');
+    } catch (error) {
+      setHealth((current) => ({
+        ...current,
+        status: 'offline',
+        realtime_status: current.realtime_status === 'connected' ? 'degraded' : current.realtime_status,
+      }));
+      setErrorMessage(error.message || 'Unable to reach the monitoring API right now.');
     } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [fetchHealth]);
+
+  useEffect(() => {
+    let mounted = true;
+    const bootstrap = async () => {
+      try {
+        const patientData = await loadPatients();
+        await loadOverview();
+        const patientId = patientData.active_patient_id || patientData.patients?.[0]?.id;
+        if (mounted && patientId) {
+          setSelectedPatientId(patientId);
+          await loadDashboard(patientId);
+        } else if (mounted) {
+          const healthData = await fetchHealth();
+          setHealth((current) => ({
+            ...current,
+            ...healthData,
+            status: 'healthy',
+          }));
+          setDashboard(emptyDashboard);
+          setLoading(false);
+        }
+      } catch (error) {
+        if (mounted) {
+          setErrorMessage(error.message || 'Unable to initialize dashboard.');
+          setHealth((current) => ({ ...current, status: 'offline' }));
+          setLoading(false);
+        }
+      }
+    };
+    bootstrap();
+    return () => {
+      mounted = false;
+    };
+  }, [fetchHealth, loadDashboard, loadOverview, loadPatients]);
+
+  useEffect(() => {
+    if (!selectedPatientId) return;
+    loadDashboard(selectedPatientId, { silent: true });
+    const interval = setInterval(() => {
+      loadDashboard(selectedPatientId, { silent: true });
+      loadOverview().catch(() => {});
+    }, 30000);
+    const ws = new WebSocket(`${WS_BASE}/ws`);
+    const pingInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send('PING');
+      }
+    }, 12000);
+    ws.onopen = () => {
+      setHealth((current) => ({ ...current, realtime_status: 'connected' }));
+    };
+    ws.onmessage = (event) => {
+      if (event.data === 'NEW_DATA') {
+        loadDashboard(selectedPatientId, { silent: true });
+        loadOverview().catch(() => {});
+      }
+    };
+    ws.onerror = () => {
+      setHealth((current) => ({ ...current, realtime_status: 'degraded' }));
+    };
+    ws.onclose = () => {
+      setHealth((current) => ({ ...current, realtime_status: 'disconnected' }));
+    };
+    return () => {
+      clearInterval(interval);
+      clearInterval(pingInterval);
+      ws.close();
+    };
+  }, [selectedPatientId, loadDashboard, loadOverview]);
+
+  useEffect(() => {
+    if (dashboard.latest?.prediction !== 'Risk') return;
+    try {
+      const audio = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
+      audio.volume = 0.4;
+      audio.play().catch(() => {});
+    } catch (error) {}
+  }, [dashboard.latest?.prediction]);
+
+  const handleSelectPatient = (patientId) => {
+    startTransition(() => setSelectedPatientId(patientId));
+    const patient = patients.find((item) => item.id === patientId);
+    if (patient) {
+      pushActivity({
+        title: 'Patient switched',
+        body: `${patient.name} is now the focus of the active workspace.`,
+        tone: 'stable',
+      });
+      pushToast(setToasts, 'info', 'Patient switched', `Now monitoring ${patient.name}.`);
     }
   };
 
-  useEffect(() => {
-    fetchDashboard();
+  const handleActivatePatient = async () => {
+    if (!selectedPatientId) return;
+    try {
+      await requestJson(`/api/v1/patients/${selectedPatientId}/activate`, { method: 'POST' });
+      const patientData = await loadPatients();
+      const activeId = patientData.active_patient_id || selectedPatientId;
+      setSelectedPatientId(activeId);
+      await Promise.all([loadDashboard(activeId), loadOverview()]);
+      pushToast(setToasts, 'success', 'Monitoring route updated', 'Live device telemetry now targets the selected patient.');
+    } catch (error) {
+      pushToast(setToasts, 'error', 'Could not activate patient', error.message);
+    }
+  };
+
+  const handleFeedback = async (accurate) => {
+    if (!dashboard.latest) return;
+    setFeedbackState({ sending: true, sent: false });
+    try {
+      await requestJson('/api/v1/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accurate,
+          patient_id: selectedPatientId,
+          snapshot_id: dashboard.latest.id,
+          prediction: dashboard.latest.prediction,
+          metrics: {
+            heart_rate: dashboard.latest.heart_rate,
+            spo2: dashboard.latest.spo2,
+            respiratory_rate: dashboard.latest.respiratory_rate,
+            body_temperature: dashboard.latest.body_temperature,
+          },
+          timestamp: new Date().toISOString(),
+        }),
+      });
+      setFeedbackState({ sending: false, sent: true });
+      await loadDashboard(selectedPatientId, { silent: true });
+      pushToast(setToasts, 'success', 'Feedback saved', 'The AI validation has been stored for future review.');
+      window.setTimeout(() => setFeedbackState({ sending: false, sent: false }), 3500);
+    } catch (error) {
+      setFeedbackState({ sending: false, sent: false });
+      pushToast(setToasts, 'error', 'Feedback failed', 'Unable to store the feedback right now.');
+    }
+  };
+
+  const handleAdmitPatient = async (event) => {
+    event.preventDefault();
+    setSavingPatient(true);
+    try {
+      const payload = { ...patientForm, age: patientForm.age ? Number(patientForm.age) : null };
+      const admitted = await requestJson('/api/v1/patients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      setPatientForm(initialPatientForm);
+      setShowAdmitForm(false);
+      await Promise.all([loadPatients(), loadOverview()]);
+      setSelectedPatientId(admitted.id);
+      await loadDashboard(admitted.id, { silent: true });
+      pushToast(setToasts, 'success', 'Patient admitted', 'The new patient has been added to the roster.');
+    } catch (error) {
+      pushToast(setToasts, 'error', 'Admit failed', error.message);
+    } finally {
+      setSavingPatient(false);
+    }
+  };
+
+  const handleManagePatientSave = async (event) => {
+    event.preventDefault();
+    if (!selectedPatient) return;
+    setSavingManagedPatient(true);
+    try {
+      const payload = {
+        ...managePatientForm,
+        age: managePatientForm.age ? Number(managePatientForm.age) : null,
+      };
+      await requestJson(`/api/v1/patients/${selectedPatient.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      await Promise.all([loadPatients(), loadOverview(), loadDashboard(selectedPatient.id, { silent: true })]);
+      pushToast(setToasts, 'success', 'Patient updated', 'Patient details were saved successfully.');
+      pushActivity({
+        title: 'Patient profile updated',
+        body: `${managePatientForm.name || selectedPatient.name} details were updated.`,
+        tone: 'stable',
+      });
+    } catch (error) {
+      pushToast(setToasts, 'error', 'Update failed', error.message);
+    } finally {
+      setSavingManagedPatient(false);
+    }
+  };
+
+  const handleSaveNotes = async () => {
+    if (!selectedPatient) return;
+    setSavingNotes(true);
+    try {
+      await requestJson(`/api/v1/patients/${selectedPatient.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: noteDraft }),
+      });
+      await Promise.all([loadPatients(), loadOverview(), loadDashboard(selectedPatient.id, { silent: true })]);
+      pushToast(setToasts, 'success', 'Note saved', 'The shift handoff note was updated.');
+    } catch (error) {
+      pushToast(setToasts, 'error', 'Save failed', error.message);
+    } finally {
+      setSavingNotes(false);
+    }
+  };
+
+  const handleReset = async () => {
+    if (!adminToken || !selectedPatientId) return;
+    setResetting(true);
+    try {
+      await requestJson(`/api/v1/reset?patient_id=${selectedPatientId}`, {
+        method: 'POST',
+        headers: { 'x-admin-token': adminToken },
+      });
+      await Promise.all([loadDashboard(selectedPatientId), loadOverview()]);
+      setShowResetConfirm(false);
+      pushToast(setToasts, 'success', 'Telemetry reset', 'Stored readings for the selected patient were cleared.');
+      pushActivity({
+        title: 'Telemetry reset performed',
+        body: `${selectedPatient?.name || 'Selected patient'} history was cleared.`,
+        tone: 'critical',
+      });
+    } catch (error) {
+      pushToast(setToasts, 'error', 'Reset failed', error.message);
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  const handleExportPDF = () => {
+    if (!dashboard.history.length || !selectedPatient) return;
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const reportRows = buildReportRows(dashboard.history);
+
+    doc.setFillColor(7, 19, 26);
+    doc.rect(0, 0, pageWidth, 32, 'F');
+    doc.setTextColor(244, 247, 250);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(24);
+    doc.text('Pulse Command Center', 14, 20);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Patient telemetry intelligence report', pageWidth - 68, 20);
+
+    doc.setTextColor(25, 37, 54);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.text('Patient Overview', 14, 46);
+    doc.setLineWidth(0.4);
+    doc.setDrawColor(196, 205, 214);
+    doc.line(14, 48, pageWidth - 14, 48);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text(`Name: ${selectedPatient.name}`, 14, 56);
+    doc.text(`Patient ID: ${selectedPatient.id}`, 14, 62);
+    doc.text(`DOB: ${formatDate(selectedPatient.dob)}`, 14, 68);
+    doc.text(`Room: ${selectedPatient.room || 'N/A'}`, 14, 74);
+    doc.text(`Doctor: ${selectedPatient.doctor || 'N/A'}`, pageWidth - 78, 56);
+    doc.text(`Admitted: ${formatDate(selectedPatient.admitted)}`, pageWidth - 78, 62);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, pageWidth - 78, 68);
+    doc.text(`Current Phase: ${dashboard.latest?.prediction || 'Unknown'}`, pageWidth - 78, 74);
+
+    autoTable(doc, {
+      startY: 88,
+      head: [['Timestamp', 'HR (BPM)', 'SpO2', 'Temp', 'Resp (/min)', 'Prediction']],
+      body: reportRows.reverse(),
+      theme: 'grid',
+      styles: { fontSize: 9, cellPadding: 3.5, font: 'helvetica' },
+      headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      didDrawPage: () => {
+        doc.setFontSize(8);
+        doc.setTextColor(120);
+        doc.text('Confidential patient telemetry report', 14, pageHeight - 10);
+        doc.text(`Page ${doc.internal.getNumberOfPages()}`, pageWidth - 26, pageHeight - 10);
+      },
+    });
+
+    doc.save(`${selectedPatient.name.replace(/\s+/g, '_')}_telemetry_report.pdf`);
+    pushToast(setToasts, 'info', 'Report exported', 'The patient telemetry report was generated as a PDF.');
+  };
+
+  const dismissToast = (toastId) => setToasts((current) => current.filter((toast) => toast.id !== toastId));
+
+  const toggleAlertAck = useCallback((alertId) => {
+    setAcknowledgedAlerts((current) => current.includes(alertId) ? current.filter((id) => id !== alertId) : [...current, alertId]);
   }, []);
 
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      fetchDashboard({ silent: true });
-    }, pollInterval);
+  const navigate = (nextRoute) => {
+    window.location.hash = `/${nextRoute}`;
+    setRoute(nextRoute);
+  };
 
-    return () => window.clearInterval(intervalId);
-  }, [pollInterval]);
-
-  const latest = snapshot.latest;
-  const currentStatus = latest?.prediction || 'Normal';
-  const statusMeta = STATUS_META[currentStatus];
-  const probability = latest?.probability || EMPTY_PROBABILITY;
-  const history = snapshot.history.map((item) => ({
-    ...item,
-    timeLabel: new Date(item.timestamp).toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit',
-    }),
-  }));
-  const historyWithTemperature = history.filter((item) => typeof item.body_temperature === 'number');
-
-  const kpis = [
-    {
-      key: 'heart_rate',
-      label: 'Heart rate',
-      unit: 'BPM',
-      value: latest?.heart_rate,
-      icon: Heart,
-      tone: 'text-rose-300',
-      decimals: 0,
-      range: 'Target 60-100',
+  useKeyboardShortcuts({
+    d: () => navigate('dashboard'),
+    w: () => navigate('ward'),
+    r: () => navigate('reports'),
+    s: () => navigate('settings'),
+    '/': () => {
+      const searchInput = document.getElementById('patient-search');
+      if (searchInput) {
+        searchInput.focus();
+        searchInput.select();
+      }
     },
-    {
-      key: 'spo2',
-      label: 'SpO2',
-      unit: '%',
-      value: latest?.spo2,
-      icon: Activity,
-      tone: 'text-sky-300',
-      decimals: 0,
-      range: 'Target 95-100',
-    },
-    {
-      key: 'body_temperature',
-      label: 'Temperature',
-      unit: '°C',
-      value: latest?.body_temperature,
-      icon: Thermometer,
-      tone: 'text-amber-300',
-      decimals: 1,
-      range: 'Target 36.1-37.2',
-    },
-    {
-      key: 'respiratory_rate',
-      label: 'Respiration',
-      unit: '/min',
-      value: latest?.respiratory_rate,
-      icon: Wind,
-      tone: 'text-emerald-300',
-      decimals: 1,
-      range: 'Target 12-20',
-    },
-  ];
+    '1': () => { if (filteredPatients[0]) handleSelectPatient(filteredPatients[0].id); },
+    '2': () => { if (filteredPatients[1]) handleSelectPatient(filteredPatients[1].id); },
+    '3': () => { if (filteredPatients[2]) handleSelectPatient(filteredPatients[2].id); },
+    '4': () => { if (filteredPatients[3]) handleSelectPatient(filteredPatients[3].id); },
+    '5': () => { if (filteredPatients[4]) handleSelectPatient(filteredPatients[4].id); },
+    '6': () => { if (filteredPatients[5]) handleSelectPatient(filteredPatients[5].id); },
+    '7': () => { if (filteredPatients[6]) handleSelectPatient(filteredPatients[6].id); },
+    '8': () => { if (filteredPatients[7]) handleSelectPatient(filteredPatients[7].id); },
+    '9': () => { if (filteredPatients[8]) handleSelectPatient(filteredPatients[8].id); },
+  });
 
-  const probabilityChart = [
-    { name: 'Normal', value: Math.round((probability.Normal || 0) * 100), fill: '#22c55e' },
-    { name: 'Stress', value: Math.round((probability.Stress || 0) * 100), fill: '#f59e0b' },
-    { name: 'Risk', value: Math.round((probability.Risk || 0) * 100), fill: '#f43f5e' },
-  ];
+  const dashboardPage = (
+    <>
+      <motion.div variants={cardMotion}>
+        <HeroPanel
+          patient={selectedPatient}
+          latest={latest}
+          health={health}
+          apiBase={API_BASE}
+          onActivate={handleActivatePatient}
+          onRefresh={() => loadDashboard(selectedPatientId, { silent: true })}
+          onExport={handleExportPDF}
+          refreshing={refreshing}
+          canActivate={Boolean(selectedPatientId)}
+        />
+      </motion.div>
 
-  return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(45,212,191,0.18),_transparent_28%),linear-gradient(180deg,_#041017_0%,_#071922_35%,_#08141b_100%)] text-slate-100">
-      <div className="mx-auto flex min-h-screen w-full max-w-[1440px] flex-col px-4 pb-8 pt-5 sm:px-6 lg:px-8">
-        <header className="glass-panel sticky top-4 z-30 mb-6 rounded-[28px] px-5 py-4">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-4">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[linear-gradient(145deg,rgba(56,189,248,0.22),rgba(34,197,94,0.18))] shadow-[0_12px_34px_rgba(15,118,110,0.2)]">
-                <Heart className="h-7 w-7 text-cyan-200" />
-              </div>
-              <div>
-                <p className="font-display text-sm uppercase tracking-[0.28em] text-cyan-200/70">Connected Care</p>
-                <h1 className="font-display text-2xl font-semibold text-white sm:text-3xl">IoT Health Operations Console</h1>
-                <p className="mt-1 text-sm text-slate-300/80">Real-time physiologic monitoring, stress triage, and model-backed status review.</p>
-              </div>
-            </div>
+      <motion.div variants={cardMotion}>
+        <TopStrip latest={latest} dashboard={dashboard} health={health} />
+      </motion.div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              <ConnectionBadge isLive={!error && health.status === 'healthy'} />
-              <div className="control-chip">
-                <Clock3 className="h-4 w-4 text-cyan-200" />
-                <span>{snapshot.updated_at ? new Date(snapshot.updated_at).toLocaleTimeString() : 'Awaiting data'}</span>
-              </div>
-              <div className="control-chip">
-                <ShieldCheck className="h-4 w-4 text-emerald-200" />
-                <span>{health.model_loaded ? 'Model ready' : 'Fallback rules'}</span>
-              </div>
-              <div className="control-chip">
-                <label htmlFor="poll-interval" className="text-slate-300/85">
-                  Refresh
-                </label>
-                <select
-                  id="poll-interval"
-                  className="bg-transparent text-sm text-white outline-none"
-                  value={pollInterval}
-                  onChange={(event) => setPollInterval(Number(event.target.value))}
-                >
-                  {POLL_OPTIONS.map((option) => (
-                    <option key={option} value={option} className="bg-slate-900">
-                      {option / 1000}s
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <button
-                type="button"
-                className="icon-button"
-                onClick={() => fetchDashboard({ silent: true })}
-                aria-label="Refresh dashboard"
-              >
-                {isRefreshing ? <Loader2 className="h-5 w-5 animate-spin" /> : <RefreshCw className="h-5 w-5" />}
-              </button>
+      {loading ? (
+        <>
+          <KpiSkeletons />
+          <div className="dashboard-main-grid">
+            <PanelSkeleton height={320} />
+            <PanelSkeleton height={320} />
+          </div>
+        </>
+      ) : !latest ? (
+        <motion.section className="empty-state-panel gradient-border" variants={cardMotion}>
+          <p className="eyebrow">Telemetry standby</p>
+          <h3>Waiting for patient readings</h3>
+          <p className="panel-copy">
+            {backendConnected
+              ? 'The dashboard is connected. Route the live device feed to a patient or send a telemetry sample to unlock charts and recommendations.'
+              : connectionMessage}
+          </p>
+          <div className="empty-state-actions">
+            <button className="primary-button" onClick={() => loadDashboard(selectedPatientId, { silent: true })}>
+              Refresh connection
+            </button>
+            <button className="secondary-button" onClick={handleActivatePatient} disabled={!selectedPatientId}>
+              Route selected patient
+            </button>
+          </div>
+        </motion.section>
+      ) : (
+        <>
+          <motion.section className="kpi-grid dashboard-kpi-grid" variants={cardMotion}>
+            {kpis.map((kpi) => <KpiCard key={kpi.key} kpi={kpi} history={dashboard.history} />)}
+          </motion.section>
+
+          <section className="dashboard-main-grid">
+            <motion.div variants={cardMotion} className="tilt-card gradient-border">
+              <TelemetryChartPanel
+                history={history}
+                loading={loading}
+                selectedMetric={metric}
+                onSelectMetric={(nextMetric) => {
+                  setMetric(nextMetric);
+                  if (nextMetric === compareMetric) setCompareMetric(nextMetric === 'heart_rate' ? 'spo2' : 'heart_rate');
+                }}
+                compareMetric={compareMetric}
+                onCompareMetricChange={setCompareMetric}
+                compareMode={compareMode}
+                onToggleCompareMode={() => setCompareMode((value) => !value)}
+              />
+            </motion.div>
+            <motion.div variants={cardMotion}>
+              <DecisionSupportPanel latest={latest} feedbackSummary={dashboard.feedback_summary} feedbackState={feedbackState} onFeedback={handleFeedback} diagnostics={diagnostics} />
+            </motion.div>
+          </section>
+
+          <section className="dashboard-support-grid">
+            <motion.div variants={cardMotion} className="tilt-card gradient-border">
+              <AlertsPanel alerts={alerts} acknowledgedIds={acknowledgedAlerts} onToggleAck={toggleAlertAck} />
+            </motion.div>
+            <motion.div variants={cardMotion} className="tilt-card gradient-border">
+              <RecommendationsPanel recommendations={recommendations} />
+            </motion.div>
+          </section>
+
+          <section className="dashboard-summary-grid">
+            <motion.div variants={cardMotion} className="tilt-card gradient-border">
+              <InsightsPanel insights={insights} />
+            </motion.div>
+            <motion.div variants={cardMotion} className="tilt-card gradient-border">
+              <HandoffSummaryPanel summary={handoffSummary} />
+            </motion.div>
+          </section>
+        </>
+      )}
+    </>
+  );
+
+  const wardPage = (
+    <>
+      <motion.section className="page-header-card gradient-border" variants={cardMotion}>
+        <div>
+          <p className="eyebrow">Ward Command</p>
+          <h2>Multi-Patient Overview</h2>
+          <p className="page-copy">Track patient state across the ward, jump between monitoring sessions, and review recent operational events.</p>
+        </div>
+        <Users className="page-icon" />
+      </motion.section>
+      <section className="ward-top-grid">
+        <motion.div variants={cardMotion} className="tilt-card gradient-border">
+          <WardOverviewPanel overviewPatients={overviewPatients} selectedPatientId={selectedPatientId} onSelectPatient={handleSelectPatient} />
+        </motion.div>
+        <motion.div variants={cardMotion} className="tilt-card gradient-border">
+          <WardMapPanel zones={wardZones} selectedPatientId={selectedPatientId} onSelectPatient={handleSelectPatient} />
+        </motion.div>
+      </section>
+      <section className="ward-bottom-grid">
+        <motion.div variants={cardMotion} className="tilt-card gradient-border">
+          <EventTimeline items={timelineItems} />
+        </motion.div>
+        <motion.div variants={cardMotion} className="tilt-card gradient-border">
+          <AlertsPanel alerts={alerts} acknowledgedIds={acknowledgedAlerts} onToggleAck={toggleAlertAck} />
+        </motion.div>
+      </section>
+    </>
+  );
+
+  const reportsPage = (
+    <>
+      <motion.section className="page-header-card gradient-border" variants={cardMotion}>
+        <div>
+          <p className="eyebrow">Reports Hub</p>
+          <h2>Exports and Historical Review</h2>
+          <p className="page-copy">Generate patient reports, inspect telemetry history, and review model validation activity in one place.</p>
+        </div>
+        <FileText className="page-icon" />
+      </motion.section>
+      <motion.section className="route-summary-strip" variants={cardMotion}>
+        <div className="route-summary-card gradient-border">
+          <span>Report scope</span>
+          <strong>{selectedPatient ? selectedPatient.name : 'No active patient'}</strong>
+        </div>
+        <div className="route-summary-card gradient-border">
+          <span>History window</span>
+          <strong>{dashboard.history.length} readings</strong>
+        </div>
+        <div className="route-summary-card gradient-border">
+          <span>Validation coverage</span>
+          <strong>{dashboard.feedback_summary.total_feedback || 0} feedback items</strong>
+        </div>
+      </motion.section>
+      <section className="reports-top-grid">
+        <motion.div className="panel report-summary-panel gradient-border" variants={cardMotion}>
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Export Actions</p>
+              <h3>Patient Report Center</h3>
             </div>
           </div>
-        </header>
+          <p className="panel-copy">Build a polished PDF for the active patient including latest diagnosis, telemetry history, and clinician-ready context.</p>
+          <button className="primary-button ripple-button shimmer-button" onClick={handleExportPDF} disabled={!dashboard.history.length}>
+            <Download className="h-4 w-4" />
+            Export patient PDF
+          </button>
+          <div className="report-mini-stats">
+            <div><span>Readings stored</span><strong>{dashboard.history.length}</strong></div>
+            <div><span>Feedback entries</span><strong>{dashboard.feedback_summary.total_feedback || 0}</strong></div>
+            <div><span>Confidence</span><strong>{latest?.probability ? `${Math.round(Math.max(...Object.values(latest.probability)) * 100)}%` : 'N/A'}</strong></div>
+          </div>
+        </motion.div>
+        <motion.div variants={cardMotion} className="tilt-card gradient-border">
+          <HandoffSummaryPanel summary={handoffSummary} />
+        </motion.div>
+      </section>
+      <motion.div variants={cardMotion} className="tilt-card gradient-border reports-table-row">
+        <TelemetryTable history={history} />
+      </motion.div>
+    </>
+  );
 
-        {error ? (
-          <section className="mb-6 rounded-[28px] border border-rose-400/25 bg-rose-500/10 px-5 py-4 text-sm text-rose-100 shadow-[0_18px_60px_rgba(244,63,94,0.12)]">
-            <div className="flex items-center gap-3">
-              <ServerCrash className="h-5 w-5 text-rose-200" />
-              <span>{error}</span>
-            </div>
-          </section>
-        ) : null}
-
-        <main className="grid gap-6 xl:grid-cols-[1.45fr_0.95fr]">
-          <section className="space-y-6">
-            <div className={`glass-panel overflow-hidden rounded-[30px] p-5 sm:p-6 ${statusMeta.glow}`}>
-              <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-                <div className="space-y-5">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <span className={`status-pill ${statusMeta.pill}`}>{statusMeta.label}</span>
-                    <span className="rounded-full border border-white/10 px-3 py-1 text-xs uppercase tracking-[0.24em] text-slate-300/75">
-                      Live inference
-                    </span>
-                  </div>
-                  <div>
-                    <h2 className="font-display text-3xl font-semibold text-white sm:text-4xl">
-                      {latest ? `${currentStatus} health state detected` : 'Device waiting for first reading'}
-                    </h2>
-                    <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300/85 sm:text-base">
-                      {latest
-                        ? `Confidence is ${Math.round((latest.confidence_score || 0) * 100)}%. The dashboard keeps a rolling 24-sample window so care teams can spot drift before it becomes a sustained event.`
-                        : 'As soon as the ESP8266 posts a valid measurement set, this screen will promote the current state, render trend lines, and expose the model output.'}
-                    </p>
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                    {kpis.map((item) => (
-                      <VitalTile
-                        key={item.key}
-                        icon={item.icon}
-                        label={item.label}
-                        unit={item.unit}
-                        value={item.value}
-                        tone={item.tone}
-                        decimals={item.decimals}
-                        range={item.range}
-                        loading={isLoading}
-                      />
-                    ))}
-                  </div>
+  const settingsPage = (
+    <>
+      <motion.section className="page-header-card gradient-border" variants={cardMotion}>
+        <div>
+          <p className="eyebrow">Workspace Settings</p>
+          <h2>Configuration and Clinical Context</h2>
+          <p className="page-copy">Manage patients, secure actions, and keep the monitoring session aligned.</p>
+        </div>
+        <Settings className="page-icon" />
+      </motion.section>
+      <motion.section className="route-summary-strip" variants={cardMotion}>
+        <div className="route-summary-card gradient-border">
+          <span>Active clinician</span>
+          <strong>{selectedPatient?.doctor || 'Doctor pending'}</strong>
+        </div>
+        <div className="route-summary-card gradient-border">
+          <span>Current room</span>
+          <strong>{selectedPatient?.room || 'Room pending'}</strong>
+        </div>
+        <div className="route-summary-card gradient-border">
+          <span>Protected actions</span>
+          <strong>Reset + patient management</strong>
+        </div>
+      </motion.section>
+      <section className="settings-main-grid">
+        <motion.div variants={cardMotion} className="tilt-card gradient-border settings-notes-card">
+          <NotesPanel patient={selectedPatient} noteDraft={noteDraft} onChange={setNoteDraft} onSave={handleSaveNotes} saving={savingNotes} />
+        </motion.div>
+        <div className="settings-side-stack">
+          <motion.div variants={cardMotion} className="tilt-card gradient-border">
+            <AdminControlsPanel
+              adminToken={adminToken}
+              onAdminTokenChange={setAdminToken}
+              onOpenResetConfirm={() => setShowResetConfirm(true)}
+              resetting={resetting}
+              disabled={!selectedPatientId}
+            />
+          </motion.div>
+          <motion.div variants={cardMotion} className="tilt-card gradient-border">
+            <div className="panel admin-panel manage-patient-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Manage Patient</p>
+                  <h3>Update Selected Patient</h3>
                 </div>
-
-                <div className={`status-orb-shell ${statusMeta.panel}`}>
-                  <div className={`status-orb ${statusMeta.ring}`}>
-                    <div className="status-orb-inner">
-                      <span className="font-display text-4xl font-semibold text-white">{currentStatus}</span>
-                      <span className="mt-2 text-sm text-slate-300/90">
-                        {latest ? `${Math.round((latest.confidence_score || 0) * 100)}% confidence` : 'No live sample yet'}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="grid gap-3">
-                    <MetricStrip label="Anomaly flag" value={latest?.anomaly_flag ? 'Active' : 'Clear'} />
-                    <MetricStrip label="Data source" value={snapshot.source === 'device' ? 'ESP8266 stream' : 'Waiting'} />
-                    <MetricStrip label="Backend" value={health.status === 'healthy' ? 'Healthy' : 'Offline'} />
-                  </div>
-                </div>
+                <UserCog className="h-5 w-5 text-cyan-200" />
               </div>
+              <p className="panel-copy">
+                Edit the selected patient profile, update assigned room and clinician, and keep bedside context current.
+              </p>
+              <form className="admit-form manage-patient-form" onSubmit={handleManagePatientSave}>
+                <input value={managePatientForm.name} onChange={(e) => setManagePatientForm((current) => ({ ...current, name: e.target.value }))} placeholder="Patient name" required />
+                <div className="form-grid">
+                  <input value={managePatientForm.age} onChange={(e) => setManagePatientForm((current) => ({ ...current, age: e.target.value }))} placeholder="Age" />
+                  <input value={managePatientForm.room} onChange={(e) => setManagePatientForm((current) => ({ ...current, room: e.target.value }))} placeholder="Room" />
+                </div>
+                <input value={managePatientForm.doctor} onChange={(e) => setManagePatientForm((current) => ({ ...current, doctor: e.target.value }))} placeholder="Attending doctor" />
+                <div className="form-grid">
+                  <input type="date" value={managePatientForm.dob || ''} onChange={(e) => setManagePatientForm((current) => ({ ...current, dob: e.target.value }))} />
+                  <input type="date" value={managePatientForm.admitted || ''} onChange={(e) => setManagePatientForm((current) => ({ ...current, admitted: e.target.value }))} />
+                </div>
+                <textarea value={managePatientForm.notes} onChange={(e) => setManagePatientForm((current) => ({ ...current, notes: e.target.value }))} placeholder="Patient notes" rows={4} />
+                <div className="admin-row manage-patient-actions">
+                  <button className="secondary-button" type="button" onClick={handleActivatePatient} disabled={!selectedPatientId}>
+                    <Radio className="h-4 w-4" />
+                    Route feed here
+                  </button>
+                  <button className="primary-button" type="submit" disabled={savingManagedPatient || !selectedPatient}>
+                    {savingManagedPatient ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserCog className="h-4 w-4" />}
+                    Save patient changes
+                  </button>
+                </div>
+              </form>
             </div>
+          </motion.div>
+        </div>
+      </section>
+      <section className="settings-handoff-row">
+        <motion.div variants={cardMotion} className="tilt-card gradient-border">
+          <HandoffSummaryPanel summary={handoffSummary} />
+        </motion.div>
+      </section>
+    </>
+  );
 
-            <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-              <Panel
-                title="Vitals trajectory"
-                subtitle="Heart rate and oxygen saturation over the recent sample window"
-                action={history.length ? `${history.length} samples` : 'Waiting'}
+  return (
+    <div className={`console-shell tone-${activeTone} theme-mode-${themeMode}`}>
+      <a className="skip-link" href="#main-content">Skip to main content</a>
+      <div className="console-aurora console-aurora-left" />
+      <div className="console-aurora console-aurora-right" />
+      <div className="particles-container" aria-hidden="true">
+        {Array.from({ length: 20 }).map((_, i) => (
+          <div
+            key={i}
+            className="particle"
+            style={{
+              left: `${Math.random() * 100}%`,
+              animationDuration: `${8 + Math.random() * 12}s`,
+              animationDelay: `${Math.random() * 10}s`,
+              width: `${2 + Math.random() * 3}px`,
+              height: `${2 + Math.random() * 3}px`,
+            }}
+          />
+        ))}
+      </div>
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
+
+      <ConfirmModal
+        open={showResetConfirm}
+        title="Reset selected patient telemetry?"
+        body="This will remove stored vitals history for the selected patient. Live device ingestion can continue after the reset."
+        confirmLabel="Reset telemetry"
+        onConfirm={handleReset}
+        onCancel={() => setShowResetConfirm(false)}
+        busy={resetting}
+      />
+
+      <div className="console-grid">
+        <div>
+          <PatientSidebar
+            patients={patients}
+            filteredPatients={filteredPatients}
+            selectedPatientId={selectedPatientId}
+            search={search}
+            onSearchChange={setSearch}
+            showAdmitForm={showAdmitForm}
+            onToggleAdmitForm={() => setShowAdmitForm((value) => !value)}
+            patientForm={patientForm}
+            onPatientFormChange={(field, value) => setPatientForm((current) => ({ ...current, [field]: value }))}
+            onAdmitPatient={handleAdmitPatient}
+            savingPatient={savingPatient}
+            onSelectPatient={handleSelectPatient}
+            health={health}
+            dashboard={dashboard}
+            overviewPatients={overviewPatients}
+            currentRoute={route}
+            onNavigate={navigate}
+            themeModes={themeModes}
+            currentThemeMode={themeMode}
+            onThemeModeChange={setThemeMode}
+          />
+        </div>
+
+        <main id="main-content" className="main-column" tabIndex="-1">
+          {errorMessage ? (
+            <div
+              className="error-banner"
+              role="alert"
+            >
+              <AlertCircle className="h-4 w-4" />
+              <span>{errorMessage}</span>
+              <button className="error-banner-action" onClick={() => loadDashboard(selectedPatientId, { silent: true })}>
+                Retry
+              </button>
+            </div>
+          ) : null}
+
+          <div
+            className={`connection-banner ${backendConnected ? 'connection-banner-ok' : 'connection-banner-error'}`}
+          >
+            <div>
+              <strong>{backendConnected ? 'Connection healthy' : 'Connection needs attention'}</strong>
+              <p>{connectionMessage}</p>
+            </div>
+            <button className="secondary-button connection-banner-button" onClick={() => loadDashboard(selectedPatientId, { silent: true })}>
+              Sync now
+            </button>
+          </div>
+
+          <AnimatePresence>
+            {(wardRiskBanner.critical.length > 0 || wardRiskBanner.stress.length > 0) && (
+              <div
+                className="ward-risk-banner"
+                role="alert"
               >
-                {isLoading ? (
-                  <ChartSkeleton />
-                ) : history.length > 1 ? (
-                  <ResponsiveContainer width="100%" height={290}>
-                    <AreaChart data={history}>
-                      <defs>
-                        <linearGradient id="hrFill" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#fb7185" stopOpacity={0.45} />
-                          <stop offset="95%" stopColor="#fb7185" stopOpacity={0.04} />
-                        </linearGradient>
-                        <linearGradient id="spo2Fill" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#38bdf8" stopOpacity={0.38} />
-                          <stop offset="95%" stopColor="#38bdf8" stopOpacity={0.04} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid stroke="rgba(148,163,184,0.16)" vertical={false} />
-                      <XAxis dataKey="timeLabel" stroke="#94a3b8" tickLine={false} axisLine={false} />
-                      <YAxis stroke="#94a3b8" tickLine={false} axisLine={false} width={36} />
-                      <Tooltip content={<CustomTooltip />} />
-                      <Area type="monotone" dataKey="heart_rate" stroke="#fb7185" strokeWidth={2.5} fill="url(#hrFill)" />
-                      <Area type="monotone" dataKey="spo2" stroke="#38bdf8" strokeWidth={2.5} fill="url(#spo2Fill)" />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <EmptyState
-                    icon={Waves}
-                    title="No trend yet"
-                    body="Send at least two sensor payloads to unlock the timeline view."
-                  />
-                )}
-              </Panel>
-
-              <Panel title="Prediction mix" subtitle="Current model confidence split across states">
-                {isLoading ? (
-                  <ChartSkeleton compact />
-                ) : (
-                  <div className="grid gap-5 lg:grid-cols-1 xl:grid-cols-[0.95fr_1.05fr]">
-                    <div className="h-[240px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                          <Pie
-                            data={probabilityChart}
-                            dataKey="value"
-                            innerRadius={58}
-                            outerRadius={86}
-                            paddingAngle={5}
-                            stroke="rgba(8,20,27,0.92)"
-                            strokeWidth={4}
-                          >
-                            {probabilityChart.map((entry) => (
-                              <Cell key={entry.name} fill={entry.fill} />
-                            ))}
-                          </Pie>
-                          <Tooltip content={<CustomTooltip />} />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <div className="space-y-3">
-                      {probabilityChart.map((item) => (
-                        <ProbabilityRow key={item.name} item={item} />
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </Panel>
-            </div>
-
-            <div className="grid gap-6 lg:grid-cols-2">
-              <Panel title="Temperature line" subtitle="Body temperature drift and acute changes">
-                {isLoading ? (
-                  <ChartSkeleton compact />
-                ) : historyWithTemperature.length > 1 ? (
-                  <ResponsiveContainer width="100%" height={220}>
-                    <LineChart data={historyWithTemperature}>
-                      <CartesianGrid stroke="rgba(148,163,184,0.16)" vertical={false} />
-                      <XAxis dataKey="timeLabel" stroke="#94a3b8" tickLine={false} axisLine={false} />
-                      <YAxis stroke="#94a3b8" tickLine={false} axisLine={false} domain={[35.5, 38.5]} width={36} />
-                      <Tooltip content={<CustomTooltip />} />
-                      <Line type="monotone" dataKey="body_temperature" stroke="#fbbf24" strokeWidth={2.6} dot={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <EmptyState icon={Thermometer} title="No temperature stream yet" body="A live chart appears after the device posts enough samples." />
-                )}
-              </Panel>
-
-              <Panel title="Respiratory cadence" subtitle="Breathing rhythm estimate tracked over time">
-                {isLoading ? (
-                  <ChartSkeleton compact />
-                ) : history.length > 1 ? (
-                  <ResponsiveContainer width="100%" height={220}>
-                    <LineChart data={history}>
-                      <CartesianGrid stroke="rgba(148,163,184,0.16)" vertical={false} />
-                      <XAxis dataKey="timeLabel" stroke="#94a3b8" tickLine={false} axisLine={false} />
-                      <YAxis stroke="#94a3b8" tickLine={false} axisLine={false} domain={[10, 25]} width={36} />
-                      <Tooltip content={<CustomTooltip />} />
-                      <Line type="monotone" dataKey="respiratory_rate" stroke="#34d399" strokeWidth={2.6} dot={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <EmptyState icon={Wind} title="Respiration trend pending" body="Breath-rate history will render automatically after the first stream." />
-                )}
-              </Panel>
-            </div>
-          </section>
-
-          <aside className="space-y-6">
-            <Panel title="Device overview" subtitle="Latest source, model mode, and operational notes">
-              <div className="space-y-3">
-                <AsideRow label="Stream source" value={snapshot.source === 'device' ? 'ESP8266 live feed' : 'Waiting for feed'} />
-                <AsideRow label="Inference mode" value={health.model_loaded ? 'Trained model' : 'Rule fallback'} />
-                <AsideRow label="Last packet" value={snapshot.updated_at ? new Date(snapshot.updated_at).toLocaleString() : 'No packet received'} />
-                <AsideRow label="GSR" value={typeof latest?.gsr === 'number' ? `${Math.round(latest.gsr).toLocaleString()} Ω` : 'Not supplied'} />
-              </div>
-            </Panel>
-
-            <Panel title="Clinical watchlist" subtitle="Priority cues generated from the current state">
-              <div className="space-y-3">
-                <WatchItem
-                  active={Boolean(latest && latest.heart_rate > 100)}
-                  title="Cardiac escalation"
-                  body="Heart rate is above the preferred baseline band."
-                />
-                <WatchItem
-                  active={Boolean(latest && latest.spo2 < 95)}
-                  title="Oxygen dip"
-                  body="Saturation is slipping under the typical recovery zone."
-                />
-                <WatchItem
-                  active={Boolean(latest && typeof latest.body_temperature === 'number' && latest.body_temperature > 37.5)}
-                  title="Thermal stress"
-                  body={typeof latest?.body_temperature === 'number' ? 'Body temperature is entering a stressed or febrile range.' : 'Temperature sensor is offline, so thermal escalation is on hold.'}
-                />
-              </div>
-            </Panel>
-
-            <Panel title="Recent payloads" subtitle="Last five accepted backend readings">
-              {isLoading ? (
-                <div className="space-y-3">
-                  {Array.from({ length: 5 }).map((_, idx) => (
-                    <div key={idx} className="h-14 animate-pulse rounded-2xl bg-white/6" />
-                  ))}
-                </div>
-              ) : history.length ? (
-                <div className="space-y-3">
-                  {history
-                    .slice(-5)
-                    .reverse()
-                    .map((item) => (
-                      <div key={item.timestamp} className="rounded-2xl border border-white/[0.08] bg-white/[0.04] px-4 py-3 transition duration-300 hover:border-cyan-300/30 hover:bg-white/[0.06]">
-                        <div className="flex items-center justify-between text-sm text-slate-200">
-                          <span>{item.timeLabel}</span>
-                          <span>{item.prediction || 'Pending'}</span>
-                        </div>
-                        <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-slate-400">
-                          <span>HR {Math.round(item.heart_rate)} BPM</span>
-                          <span>SpO2 {Math.round(item.spo2)}%</span>
-                          <span>Temp {typeof item.body_temperature === 'number' ? `${item.body_temperature.toFixed(1)}°C` : 'Sensor offline'}</span>
-                          <span>RR {item.respiratory_rate.toFixed(1)}/min</span>
-                        </div>
+                <div className="ward-risk-banner-inner">
+                  <ShieldAlert className="h-4 w-4 ward-risk-icon" />
+                  <div className="ward-risk-content">
+                    {wardRiskBanner.critical.length > 0 && (
+                      <div className="ward-risk-row ward-risk-critical">
+                        <strong>{wardRiskBanner.critical.length} critical</strong>
+                        <span>{wardRiskBanner.critical.map((p) => `${p.name}${p.room ? ` (Room ${p.room})` : ''}`).join(', ')}</span>
                       </div>
-                    ))}
+                    )}
+                    {wardRiskBanner.stress.length > 0 && (
+                      <div className="ward-risk-row ward-risk-stress">
+                        <strong>{wardRiskBanner.stress.length} under stress</strong>
+                        <span>{wardRiskBanner.stress.map((p) => `${p.name}${p.room ? ` (Room ${p.room})` : ''}`).join(', ')}</span>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    className="ward-risk-dismiss"
+                    onClick={() => {
+                      const firstCritical = wardRiskBanner.critical[0];
+                      if (firstCritical) handleSelectPatient(firstCritical.id);
+                    }}
+                  >
+                    Review
+                  </button>
                 </div>
-              ) : (
-                <EmptyState icon={WifiOff} title="No accepted payloads" body="Once the backend receives valid JSON, recent packets will appear here." />
-              )}
-            </Panel>
-          </aside>
+              </div>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence mode="wait">
+            <motion.div
+            key={route}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+          >
+              {route === 'dashboard' && dashboardPage}
+              {route === 'ward' && wardPage}
+              {route === 'reports' && reportsPage}
+              {route === 'settings' && settingsPage}
+            </motion.div>
+          </AnimatePresence>
+
+          <div
+            className="floating-status"
+          >
+            <BellRing className="h-4 w-4" />
+            <span>
+              {refreshing
+                ? 'Syncing fresh readings...'
+                : backendConnected
+                  ? (latest ? 'Live telemetry monitoring active' : 'Waiting for telemetry to arrive')
+                  : 'Backend connection lost'}
+            </span>
+            {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Radio className="h-4 w-4" />}
+          </div>
         </main>
       </div>
     </div>
   );
 }
-
-function ConnectionBadge({ isLive }) {
-  return (
-    <div className={`connection-badge ${isLive ? 'connection-live' : 'connection-offline'}`}>
-      {isLive ? <Wifi className="h-4 w-4" /> : <WifiOff className="h-4 w-4" />}
-      <span>{isLive ? 'Backend connected' : 'Backend offline'}</span>
-    </div>
-  );
-}
-
-function VitalTile({ icon: Icon, label, unit, value, tone, decimals, range, loading }) {
-  return (
-    <div className="metric-card">
-      <div className="flex items-center justify-between">
-        <div className={`rounded-2xl border border-white/[0.08] bg-white/[0.04] p-3 ${tone}`}>
-          <Icon className="h-5 w-5" />
-        </div>
-        <span className="text-xs uppercase tracking-[0.24em] text-slate-400">{label}</span>
-      </div>
-      {loading ? (
-        <div className="mt-5 h-10 animate-pulse rounded-2xl bg-white/8" />
-      ) : (
-        <div className="mt-5 flex items-end gap-2">
-          <span className="font-display text-4xl font-semibold text-white">
-            {typeof value === 'number' ? value.toFixed(decimals) : '--'}
-          </span>
-          <span className="pb-1 text-sm text-slate-400">{unit}</span>
-        </div>
-      )}
-      <p className="mt-3 text-xs text-slate-400">{range}</p>
-    </div>
-  );
-}
-
-function Panel({ title, subtitle, action, children }) {
-  return (
-    <section className="glass-panel rounded-[30px] p-5 sm:p-6">
-      <div className="mb-5 flex items-start justify-between gap-3">
-        <div>
-          <h3 className="font-display text-xl font-semibold text-white">{title}</h3>
-          {subtitle ? <p className="mt-1 text-sm text-slate-400">{subtitle}</p> : null}
-        </div>
-        {action ? <span className="rounded-full border border-white/10 px-3 py-1 text-xs text-slate-300">{action}</span> : null}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function ProbabilityRow({ item }) {
-  return (
-    <div className="rounded-2xl border border-white/[0.08] bg-white/[0.04] p-4">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-sm text-slate-200">{item.name}</span>
-        <span className="text-sm font-semibold text-white">{item.value}%</span>
-      </div>
-      <div className="h-2 overflow-hidden rounded-full bg-white/8">
-        <div className="h-full rounded-full transition-[width] duration-700" style={{ width: `${item.value}%`, backgroundColor: item.fill }} />
-      </div>
-    </div>
-  );
-}
-
-function AsideRow({ label, value }) {
-  return (
-    <div className="flex items-center justify-between rounded-2xl border border-white/[0.08] bg-white/[0.04] px-4 py-3">
-      <span className="text-sm text-slate-400">{label}</span>
-      <span className="text-sm font-medium text-white">{value}</span>
-    </div>
-  );
-}
-
-function MetricStrip({ label, value }) {
-  return (
-    <div className="flex items-center justify-between rounded-2xl border border-white/[0.08] bg-black/20 px-4 py-3 text-sm">
-      <span className="text-slate-400">{label}</span>
-      <span className="font-medium text-white">{value}</span>
-    </div>
-  );
-}
-
-function WatchItem({ active, title, body }) {
-  return (
-    <div className={`rounded-2xl border px-4 py-4 transition duration-300 ${active ? 'border-rose-300/30 bg-rose-500/10' : 'border-white/[0.08] bg-white/[0.04]'}`}>
-      <div className="flex items-start gap-3">
-        <div className={`mt-0.5 rounded-full p-2 ${active ? 'bg-rose-500/20 text-rose-200' : 'bg-emerald-500/[0.12] text-emerald-200'}`}>
-          <AlertTriangle className="h-4 w-4" />
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-white">{title}</p>
-          <p className="mt-1 text-sm leading-6 text-slate-400">{body}</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function EmptyState({ icon: Icon, title, body }) {
-  return (
-    <div className="flex min-h-[180px] flex-col items-center justify-center rounded-[28px] border border-dashed border-white/10 bg-black/10 px-6 py-8 text-center">
-      <div className="mb-4 rounded-2xl bg-white/[0.04] p-3 text-cyan-200">
-        <Icon className="h-6 w-6" />
-      </div>
-      <p className="font-display text-xl font-semibold text-white">{title}</p>
-      <p className="mt-2 max-w-sm text-sm leading-6 text-slate-400">{body}</p>
-    </div>
-  );
-}
-
-function ChartSkeleton({ compact = false }) {
-  return <div className={`animate-pulse rounded-[24px] bg-white/[0.05] ${compact ? 'h-[220px]' : 'h-[290px]'}`} />;
-}
-
-function CustomTooltip({ active, payload, label }) {
-  if (!active || !payload || !payload.length) {
-    return null;
-  }
-
-  return (
-    <div className="rounded-2xl border border-white/10 bg-slate-950/95 px-4 py-3 shadow-2xl backdrop-blur-xl">
-      <p className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-400">{label}</p>
-      <div className="space-y-1.5">
-        {payload.map((entry) => (
-          <div key={entry.dataKey} className="flex items-center justify-between gap-6 text-sm">
-            <span className="text-slate-300">{entry.name || entry.dataKey}</span>
-            <span style={{ color: entry.color }}>{typeof entry.value === 'number' ? entry.value.toFixed(1) : entry.value}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-export default App;
-

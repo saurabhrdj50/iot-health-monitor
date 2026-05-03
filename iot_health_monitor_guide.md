@@ -99,7 +99,7 @@ Install these through **Arduino IDE → Sketch → Include Library → Manage Li
 
 The complete firmware is located at:
 
-[health_monitor.ino](file:///c:/Users/gupta/Desktop/iot-health-monitor/arduino/health_monitor/health_monitor.ino)
+[thingspeak_ml_enhanced.ino](file:///c:/Users/gupta/Desktop/iot-health-monitor/arduino/health_monitor/thingspeak_ml_enhanced.ino)
 
 ### Code Architecture Overview
 
@@ -124,12 +124,13 @@ stateDiagram-v2
 
 ### Configuration — Change Before Upload
 
-Open [health_monitor.ino](file:///c:/Users/gupta/Desktop/iot-health-monitor/arduino/health_monitor/health_monitor.ino) and edit these three lines:
+Open [thingspeak_ml_enhanced.ino](file:///c:/Users/gupta/Desktop/iot-health-monitor/arduino/health_monitor/thingspeak_ml_enhanced.ino) and edit these lines:
 
 ```cpp
-const char* WIFI_SSID     = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD  = "YOUR_WIFI_PASSWORD";
-const char* SERVER_URL     = "http://YOUR_BACKEND_IP:8000/api/v1/predict";
+const char* ssid = "YOUR_WIFI_SSID";
+const char* password  = "YOUR_WIFI_PASSWORD";
+unsigned long myChannelNumber = YOUR_CHANNEL_ID;
+const char* myWriteAPIKey = "YOUR_WRITE_API_KEY";
 ```
 
 ---
@@ -232,7 +233,7 @@ MAX30102 should appear at **0x57**.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `wdt reset` in Serial Monitor | Code blocked for > 3 seconds without `yield()` | All loops in the firmware include `yield()` calls |
-| `Soft WDT reset` | Long I2C transaction or WiFi operation | `delay(10)` at end of [loop()](file:///c:/Users/gupta/Desktop/iot-health-monitor/arduino/health_monitor/health_monitor.ino#619-706) ensures OS tasks run |
+| `Soft WDT reset` | Long I2C transaction or WiFi operation | `delay(10)` at end of loop ensures OS tasks run |
 | Stack overflow | Too many local variables or deep recursion | Avoid large arrays on stack; use `static` or `global` |
 | Random reboots | Insufficient power supply | Use a **good quality** USB cable and a 5V/1A+ power source |
 
@@ -302,8 +303,8 @@ Sensor Status:
 - [ ] Add 4.7kΩ pull-up resistor for DS18B20
 - [ ] Install Arduino IDE board package for ESP8266
 - [ ] Install libraries: SparkFun MAX3010x, OneWire, DallasTemperature
-- [ ] Open [health_monitor.ino](file:///c:/Users/gupta/Desktop/iot-health-monitor/arduino/health_monitor/health_monitor.ino) and set WiFi credentials + server URL
+- [ ] Open [thingspeak_ml_enhanced.ino](file:///c:/Users/gupta/Desktop/iot-health-monitor/arduino/health_monitor/thingspeak_ml_enhanced.ino) and set WiFi credentials + ThingSpeak keys
 - [ ] Select board: **NodeMCU 1.0 (ESP-12E Module)**
 - [ ] Upload and open Serial Monitor at **115200 baud**
 - [ ] Place finger firmly on MAX30102 and verify readings
-- [ ] Start backend server and confirm data arrives at `/api/v1/predict`
+- [ ] Start backend server and confirm data arrives at the dashboard by polling ThingSpeak automatically

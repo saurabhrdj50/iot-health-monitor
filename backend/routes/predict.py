@@ -2,19 +2,44 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, status
 
-from backend.models.schemas import DashboardSnapshot, HealthResponse, PredictionResponse, VitalSignsInput, VitalSignsResponse
+from backend.database import (
+    clear_history,
+    create_patient,
+    get_active_patient,
+    get_feedback_summary,
+    get_history as db_get_history,
+    get_latest as db_get_latest,
+    get_patient,
+    get_patient_overview,
+    insert_snapshot,
+    list_patients,
+    save_feedback,
+    set_active_patient,
+    update_patient,
+)
+from backend.models.schemas import (
+    DashboardSnapshot,
+    FeedbackInput,
+    FeedbackResponse,
+    HealthResponse,
+    PatientCreate,
+    PatientDirectoryResponse,
+    PatientOverviewResponse,
+    PatientSummary,
+    PatientUpdate,
+    PredictionResponse,
+    VitalSignsInput,
+    VitalSignsResponse,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-MAX_HISTORY_ITEMS = 60
 DEFAULT_BODY_TEMPERATURE = 36.8
-history_store: List[Dict[str, Any]] = []
-latest_snapshot: Dict[str, Any] | None = None
 inference_engine = None
 
 try:
@@ -71,44 +96,68 @@ def _fallback_prediction(data: Dict[str, Any]) -> Dict[str, Any]:
             "scaler_loaded": False,
             "fallback_mode": True,
             "temperature_inferred": data.get("body_temperature") is None,
+            "patient_id": data.get("patient_id"),
         },
     }
 
 
-def _persist_snapshot(payload: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
-    global latest_snapshot
+def _resolve_patient_id(patient_id: Optional[int]) -> int:
+    if patient_id is not None:
+        patient = get_patient(patient_id)
+        if patient is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
+        return patient["id"]
 
+    active = get_active_patient()
+    if active is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="No active patient configured")
+    return active["id"]
+
+
+def process_vital_signs(
+    payload: Dict[str, Any],
+    *,
+    source: str = "manual",
+    source_entry_id: Optional[str] = None,
+    patient_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    normalized = dict(payload)
+    normalized["timestamp"] = _ensure_timestamp(normalized.get("timestamp"))
+    normalized["patient_id"] = _resolve_patient_id(patient_id or normalized.get("patient_id"))
+    logger.info("Processing vitals for patient %s via %s", normalized["patient_id"], source)
+
+    result = inference_engine.predict_from_dict(normalized) if inference_engine else _fallback_prediction(normalized)
     snapshot = {
-        "heart_rate": float(payload["heart_rate"]),
-        "respiratory_rate": float(payload["respiratory_rate"]),
-        "body_temperature": None if payload.get("body_temperature") is None else float(payload["body_temperature"]),
-        "spo2": float(payload["spo2"]),
-        "gsr": None if payload.get("gsr") is None else float(payload["gsr"]),
-        "timestamp": payload["timestamp"],
+        "patient_id": normalized["patient_id"],
+        "heart_rate": float(normalized["heart_rate"]),
+        "respiratory_rate": float(normalized["respiratory_rate"]),
+        "body_temperature": None if normalized.get("body_temperature") is None else float(normalized["body_temperature"]),
+        "spo2": float(normalized["spo2"]),
+        "gsr": None if normalized.get("gsr") is None else float(normalized["gsr"]),
+        "timestamp": normalized["timestamp"],
         "prediction": result["prediction"],
         "confidence_score": float(result["confidence_score"]),
         "anomaly_flag": bool(result["anomaly_flag"]),
         "probability": result["probability"],
+        "source": source,
+        "source_entry_id": source_entry_id,
     }
 
-    history_store.append(snapshot)
-    if len(history_store) > MAX_HISTORY_ITEMS:
-        del history_store[:-MAX_HISTORY_ITEMS]
-
-    latest_snapshot = snapshot
-    return snapshot
+    persisted = insert_snapshot(snapshot)
+    return {
+        "prediction": PredictionResponse(**result),
+        "snapshot": VitalSignsResponse(**persisted) if persisted else None,
+        "inserted": persisted is not None,
+    }
 
 
 @router.post("/predict", response_model=PredictionResponse)
 async def predict(vital_signs: VitalSignsInput) -> PredictionResponse:
-    payload = vital_signs.model_dump()
-    payload["timestamp"] = _ensure_timestamp(payload.get("timestamp"))
-    logger.info("Received prediction request: %s", payload)
-
     try:
-        result = inference_engine.predict_from_dict(payload) if inference_engine else _fallback_prediction(payload)
-        _persist_snapshot(payload, result)
-        return PredictionResponse(**result)
+        processed = process_vital_signs(vital_signs.model_dump(), source="manual")
+        return processed["prediction"]
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     except Exception as exc:
@@ -119,31 +168,73 @@ async def predict(vital_signs: VitalSignsInput) -> PredictionResponse:
         ) from exc
 
 
+@router.get("/patients", response_model=PatientDirectoryResponse)
+async def get_patients() -> PatientDirectoryResponse:
+    patients = [PatientSummary(**item) for item in list_patients()]
+    active = next((patient.id for patient in patients if patient.active), None)
+    return PatientDirectoryResponse(patients=patients, active_patient_id=active)
+
+
+@router.get("/patients/overview", response_model=PatientOverviewResponse)
+async def get_patients_overview() -> PatientOverviewResponse:
+    return PatientOverviewResponse(patients=get_patient_overview())
+
+
+@router.post("/patients", response_model=PatientSummary, status_code=status.HTTP_201_CREATED)
+async def admit_patient(payload: PatientCreate) -> PatientSummary:
+    return PatientSummary(**create_patient(payload.model_dump()))
+
+
+@router.patch("/patients/{patient_id}", response_model=PatientSummary)
+async def patch_patient(patient_id: int, payload: PatientUpdate) -> PatientSummary:
+    patient = update_patient(patient_id, payload.model_dump(exclude_none=True))
+    if patient is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
+    return PatientSummary(**patient)
+
+
+@router.post("/patients/{patient_id}/activate", response_model=PatientSummary)
+async def activate_patient(patient_id: int) -> PatientSummary:
+    patient = set_active_patient(patient_id)
+    if patient is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
+    return PatientSummary(**patient)
+
+
 @router.get("/latest-data", response_model=VitalSignsResponse)
-async def get_latest_data() -> VitalSignsResponse:
+async def get_latest_data(patient_id: Optional[int] = None) -> VitalSignsResponse:
+    target_patient_id = _resolve_patient_id(patient_id)
+    latest_snapshot = db_get_latest(target_patient_id)
     if latest_snapshot is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No data available yet")
     return VitalSignsResponse(**latest_snapshot)
 
 
 @router.get("/history", response_model=List[VitalSignsResponse])
-async def get_history(limit: int = 20) -> List[VitalSignsResponse]:
+async def get_history(limit: int = 20, patient_id: Optional[int] = None) -> List[VitalSignsResponse]:
     if limit < 1:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="limit must be greater than 0")
-    return [VitalSignsResponse(**item) for item in history_store[-limit:]]
+    target_patient_id = _resolve_patient_id(patient_id)
+    return [VitalSignsResponse(**item) for item in db_get_history(limit, target_patient_id)]
 
 
 @router.get("/dashboard", response_model=DashboardSnapshot)
-async def get_dashboard(limit: int = 20) -> DashboardSnapshot:
+async def get_dashboard(limit: int = 20, patient_id: Optional[int] = None) -> DashboardSnapshot:
+    target_patient_id = _resolve_patient_id(patient_id)
+    patient = get_patient(target_patient_id)
+    latest_snapshot = db_get_latest(target_patient_id)
     latest = VitalSignsResponse(**latest_snapshot) if latest_snapshot else None
-    history = [VitalSignsResponse(**item) for item in history_store[-limit:]]
+    history = [VitalSignsResponse(**item) for item in db_get_history(limit, target_patient_id)]
     updated_at = latest.timestamp if latest else None
     return DashboardSnapshot(
+        patient=PatientSummary(**patient) if patient else None,
         latest=latest,
         history=history,
         source="device" if latest else "waiting_for_data",
         model_loaded=inference_engine is not None and inference_engine.model is not None,
         updated_at=updated_at,
+        monitoring_patient_id=target_patient_id,
+        feedback_summary=get_feedback_summary(target_patient_id),
     )
 
 
@@ -152,14 +243,34 @@ async def health_check() -> HealthResponse:
     return HealthResponse(
         status="healthy",
         timestamp=datetime.now().isoformat(),
-        version="1.0.0",
+        version="2.0.0",
         model_loaded=inference_engine is not None and inference_engine.model is not None,
     )
 
 
-@router.post("/reset")
-async def reset_data() -> Dict[str, str]:
-    global latest_snapshot
-    history_store.clear()
-    latest_snapshot = None
-    return {"message": "Data reset successfully", "timestamp": datetime.now().isoformat()}
+@router.post("/feedback", response_model=FeedbackResponse)
+async def receive_feedback(payload: FeedbackInput) -> FeedbackResponse:
+    target_patient_id = _resolve_patient_id(payload.patient_id)
+    saved = save_feedback(
+        {
+            "patient_id": target_patient_id,
+            "snapshot_id": payload.snapshot_id,
+            "accurate": payload.accurate,
+            "prediction": payload.prediction,
+            "metrics": payload.metrics,
+            "notes": payload.notes,
+        }
+    )
+    logger.info("Stored ML feedback for patient %s", target_patient_id)
+    return FeedbackResponse(**saved)
+
+
+async def reset_data(patient_id: Optional[int] = None) -> Dict[str, Any]:
+    target_patient_id = _resolve_patient_id(patient_id) if patient_id is not None else None
+    deleted = clear_history(target_patient_id)
+    return {
+        "message": "Data reset successfully",
+        "timestamp": datetime.now().isoformat(),
+        "deleted_records": deleted,
+        "patient_id": target_patient_id,
+    }
