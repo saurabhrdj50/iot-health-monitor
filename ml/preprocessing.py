@@ -36,7 +36,7 @@ SOURCE_RISK_HIGH = "High Risk"
 @dataclass
 class VitalReading:
     heart_rate: float
-    respiratory_rate: float
+    respiratory_rate: float | None
     body_temperature: float | None
     spo2: float
     gsr: float | None = None
@@ -45,6 +45,10 @@ class VitalReading:
 
 def resolve_body_temperature(body_temperature: float | None) -> float:
     return BASELINE_STATS["temp_normal"] if body_temperature is None else float(body_temperature)
+
+
+def resolve_respiratory_rate(respiratory_rate: float | None) -> float:
+    return BASELINE_STATS["rr_normal"] if respiratory_rate is None else float(respiratory_rate)
 
 
 def normalize_dataset_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -108,7 +112,7 @@ def build_feature_dict(reading: VitalReading | Dict[str, Any]) -> Dict[str, floa
     if isinstance(reading, dict):
         reading = VitalReading(
             heart_rate=float(reading["heart_rate"]),
-            respiratory_rate=float(reading["respiratory_rate"]),
+            respiratory_rate=None if reading.get("respiratory_rate") is None else float(reading["respiratory_rate"]),
             body_temperature=None if reading.get("body_temperature") is None else float(reading["body_temperature"]),
             spo2=float(reading["spo2"]),
             gsr=None if reading.get("gsr") is None else float(reading["gsr"]),
@@ -116,7 +120,7 @@ def build_feature_dict(reading: VitalReading | Dict[str, Any]) -> Dict[str, floa
         )
 
     hr = float(reading.heart_rate)
-    rr = float(reading.respiratory_rate)
+    rr = resolve_respiratory_rate(reading.respiratory_rate)
     temp = resolve_body_temperature(reading.body_temperature)
     spo2 = float(reading.spo2)
 
@@ -195,28 +199,28 @@ def create_rule_based_labels(df: pd.DataFrame) -> pd.DataFrame:
         score = 0
         severe_signals = 0
 
-        if hr >= 95 or hr <= 63:
+        if hr >= 105 or hr <= 55:
             score += 2
             severe_signals += 1
-        elif hr >= 88 or hr <= 66:
+        elif hr >= 95 or hr <= 62:
             score += 1
 
-        if spo2 <= 95.8:
+        if spo2 <= 93:
             score += 2
             severe_signals += 1
-        elif spo2 <= 96.5:
+        elif spo2 <= 95:
             score += 1
 
-        if temp >= 37.3 or temp <= 36.2:
+        if temp >= 38.0 or temp <= 35.5:
             score += 2
             severe_signals += 1
-        elif temp >= 37.1 or temp <= 36.4:
+        elif temp >= 37.5 or temp <= 36.0:
             score += 1
 
-        if rr >= 19 or rr <= 12:
+        if rr >= 22 or rr <= 10:
             score += 2
             severe_signals += 1
-        elif rr >= 18 or rr <= 13:
+        elif rr >= 20 or rr <= 12:
             score += 1
 
         if source_risk == SOURCE_RISK_HIGH:

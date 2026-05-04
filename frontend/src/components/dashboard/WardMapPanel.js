@@ -19,7 +19,7 @@ export default function WardMapPanel({ zones, selectedPatientId, onSelectPatient
           <p className="eyebrow">Ward Grid</p>
           <h3>Operational Layout</h3>
         </div>
-        <Map className="h-5 w-5 text-cyan-200" />
+        <Map className="h-5 w-5" style={{ color: 'var(--accent)' }} />
       </div>
       <div className="ward-zone-grid">
         {zones.map((zone, zoneIndex) => (
@@ -33,7 +33,7 @@ export default function WardMapPanel({ zones, selectedPatientId, onSelectPatient
           >
             <div className="ward-zone-head">
               <strong>{zone.zone}</strong>
-              <span>{zone.patients.length} patients</span>
+              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{zone.patients.length} patients</span>
             </div>
             <div className="ward-zone-patients">
               {zone.patients.map((patient) => (

@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Loader2, Save } from 'lucide-react';
+import { Loader2, Save, StickyNote } from 'lucide-react';
 
 export default function NotesPanel({
   patient,
@@ -16,6 +16,7 @@ export default function NotesPanel({
           <p className="eyebrow">Clinician Notes</p>
           <h3>Shift Handoff Note</h3>
         </div>
+        <StickyNote className="h-5 w-5" style={{ color: 'var(--accent)' }} />
       </div>
       <p className="panel-copy">
         Save concise patient context so the next clinician immediately understands risk, trend direction, and what to verify next.

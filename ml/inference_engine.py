@@ -17,6 +17,7 @@ from ml.preprocessing import (
     VitalReading,
     build_feature_dict,
     feature_vector_from_reading,
+    resolve_respiratory_rate,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -76,7 +77,8 @@ class InferenceEngine:
     def _validate_input(self, vitals: VitalReading) -> None:
         if not 30 <= vitals.heart_rate <= 250:
             raise ValueError(f"heart_rate out of range: {vitals.heart_rate}")
-        if not 5 <= vitals.respiratory_rate <= 40:
+        resolved_rr = resolve_respiratory_rate(vitals.respiratory_rate)
+        if not 5 <= resolved_rr <= 40:
             raise ValueError(f"respiratory_rate out of range: {vitals.respiratory_rate}")
         if vitals.body_temperature is not None and not 25 <= vitals.body_temperature <= 45:
             raise ValueError(f"body_temperature out of range: {vitals.body_temperature}")
@@ -93,19 +95,19 @@ class InferenceEngine:
 
     def _is_risk_condition(self, features: Dict[str, float]) -> bool:
         return (
-            features["spo2"] < 92
-            or features["heart_rate"] > 110
-            or features["body_temperature"] > 38.5
-            or (features["body_temperature"] > 37.5 and features["heart_rate"] > 90)
+            features["spo2"] < 90
+            or features["heart_rate"] > 120
+            or features["body_temperature"] > 39.0
+            or (features["body_temperature"] > 38.0 and features["heart_rate"] > 100)
             or features["abnormal_flags"] >= 3
         )
 
     def _fallback_prediction(self, features: Dict[str, float]) -> np.ndarray:
         if features["abnormal_flags"] >= 3 or features["health_index"] < 40:
             return np.array([0.08, 0.22, 0.70], dtype=float)
-        if features["abnormal_flags"] >= 2 or features["stress_indicator"] > 3:
+        if features["abnormal_flags"] >= 2 or features["stress_indicator"] > 5:
             return np.array([0.18, 0.55, 0.27], dtype=float)
-        if features["abnormal_flags"] >= 1 or features["stress_indicator"] > 1.5:
+        if features["abnormal_flags"] >= 1 or features["stress_indicator"] > 3:
             return np.array([0.28, 0.54, 0.18], dtype=float)
         return np.array([0.76, 0.18, 0.06], dtype=float)
 
@@ -148,6 +150,8 @@ class InferenceEngine:
             "scaler_loaded": self.scaler is not None,
             "fallback_mode": self.model is None,
             "temperature_inferred": vitals.body_temperature is None,
+            "respiratory_rate_estimated": vitals.respiratory_rate is None,
+            "respiratory_rate_estimation_method": "baseline_default" if vitals.respiratory_rate is None else "reported",
         }
 
         return PredictionResult(
@@ -162,7 +166,7 @@ class InferenceEngine:
     def predict_from_dict(self, data: Dict[str, Any]) -> Dict[str, Any]:
         vitals = VitalReading(
             heart_rate=float(data["heart_rate"]),
-            respiratory_rate=float(data["respiratory_rate"]),
+            respiratory_rate=None if data.get("respiratory_rate") is None else float(data["respiratory_rate"]),
             body_temperature=None if data.get("body_temperature") is None else float(data["body_temperature"]),
             spo2=float(data["spo2"]),
             gsr=None if data.get("gsr") is None else float(data["gsr"]),

@@ -314,6 +314,21 @@ def set_active_patient(patient_id: int) -> Optional[Dict[str, Any]]:
     conn.close()
     return _row_to_patient(row)
 
+def delete_patient(patient_id: int) -> bool:
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM patients WHERE id = ?", (patient_id,))
+    if cursor.fetchone() is None:
+        conn.close()
+        return False
+
+    cursor.execute("DELETE FROM prediction_feedback WHERE patient_id = ?", (patient_id,))
+    cursor.execute("DELETE FROM patient_vitals WHERE patient_id = ?", (patient_id,))
+    cursor.execute("DELETE FROM patients WHERE id = ?", (patient_id,))
+    conn.commit()
+    conn.close()
+    return True
+
 
 def _row_to_snapshot(row: sqlite3.Row) -> Dict[str, Any]:
     data = dict(row)

@@ -90,11 +90,10 @@ Useful endpoints:
 ```powershell
 cd frontend
 npm install
-$env:REACT_APP_API_URL="http://127.0.0.1:8000"
 npm start
 ```
 
-The local frontend config is stored in [frontend/.env.local](/C:/Users/gupta/Desktop/iot-health-monitor/frontend/.env.local:1).
+The local frontend config is handled seamlessly since routing targets `http://localhost:8000` directly.
 
 Production build:
 

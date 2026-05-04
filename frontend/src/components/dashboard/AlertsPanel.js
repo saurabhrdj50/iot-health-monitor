@@ -24,8 +24,9 @@ export default memo(function AlertsPanel({ alerts, acknowledgedIds, onToggleAck 
       </div>
 
       <div className="alert-summary">
-        <span>{criticalCount} critical</span>
+        {criticalCount > 0 && <span style={{ color: 'var(--danger)' }}>{criticalCount} critical</span>}
         <span>{outstandingCount} outstanding</span>
+        <span>{alerts.length} total</span>
       </div>
 
       <div className="alert-list">
@@ -37,7 +38,7 @@ export default memo(function AlertsPanel({ alerts, acknowledgedIds, onToggleAck 
               className={`alert-card alert-${alert.tone} ${acknowledged ? 'alert-acknowledged' : ''}`}
             >
               <div className="alert-icon">
-                {alert.tone === 'critical' ? <ShieldAlert className="h-4 w-4" /> : alert.tone === 'watch' ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+                {alert.tone === 'critical' ? <ShieldAlert className="h-4 w-4" style={{ color: 'var(--danger)' }} /> : alert.tone === 'watch' ? <AlertCircle className="h-4 w-4" style={{ color: 'var(--warning)' }} /> : <CheckCircle2 className="h-4 w-4" style={{ color: 'var(--success)' }} />}
               </div>
               <div className="alert-copy">
                 <strong>{alert.title}</strong>
@@ -47,7 +48,7 @@ export default memo(function AlertsPanel({ alerts, acknowledgedIds, onToggleAck 
                 className={`ghost-button small ${ackGlow[alert.id] ? 'btn-response-success' : ''}`}
                 onClick={() => handleAck(alert.id)}
               >
-                {acknowledged ? 'Acknowledged' : 'Acknowledge'}
+                {acknowledged ? 'Ack' : 'Acknowledge'}
               </button>
             </div>
           );

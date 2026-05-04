@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { AlertCircle, CheckCircle2, Sparkles, ShieldAlert } from 'lucide-react';
+import { AlertCircle, CheckCircle2, ShieldAlert, Lightbulb } from 'lucide-react';
 
 export default memo(function RecommendationsPanel({ recommendations }) {
   return (
@@ -9,7 +9,7 @@ export default memo(function RecommendationsPanel({ recommendations }) {
           <p className="eyebrow">Clinical Suggestions</p>
           <h3>Trend-Based Recommendations</h3>
         </div>
-        <Sparkles className="h-5 w-5 text-cyan-200" />
+        <Lightbulb className="h-5 w-5" style={{ color: 'var(--warning)' }} />
       </div>
       <div className="recommendation-list">
         {recommendations.map((item) => (
@@ -18,7 +18,7 @@ export default memo(function RecommendationsPanel({ recommendations }) {
             className={`recommendation-card recommendation-${item.tone}`}
           >
             <div className="recommendation-icon">
-              {item.tone === 'critical' ? <ShieldAlert className="h-4 w-4" /> : item.tone === 'watch' ? <AlertCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+              {item.tone === 'critical' ? <ShieldAlert className="h-4 w-4" style={{ color: 'var(--danger)' }} /> : item.tone === 'watch' ? <AlertCircle className="h-4 w-4" style={{ color: 'var(--warning)' }} /> : <CheckCircle2 className="h-4 w-4" style={{ color: 'var(--success)' }} />}
             </div>
             <div>
               <strong>{item.title}</strong>

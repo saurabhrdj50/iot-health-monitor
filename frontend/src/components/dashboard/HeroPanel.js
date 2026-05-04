@@ -2,6 +2,7 @@ import React, { useState, useCallback, memo } from 'react';
 import { BedDouble, ClipboardCopy, Download, Loader2, Radio, RefreshCw, Stethoscope, User } from 'lucide-react';
 import { formatDate } from '../../lib/dashboard';
 import { useRelativeTime } from '../../hooks/useRelativeTime';
+import AIHealthScore from './AIHealthScore';
 
 export default memo(function HeroPanel({
   patient,
@@ -50,6 +51,18 @@ export default memo(function HeroPanel({
     }).catch(() => {});
   }, [patient, liveState, latestTime]);
 
+  const healthScore = (() => {
+    if (!latest) return null;
+    let score = 85;
+    if (latest.prediction === 'Risk') score = Math.min(score, 25);
+    else if (latest.prediction === 'Stress') score = Math.min(score, 55);
+    if (latest.spo2 < 95) score -= Math.max(0, (95 - latest.spo2) * 3);
+    if (latest.heart_rate > 100) score -= Math.max(0, (latest.heart_rate - 100) * 0.5);
+    if (latest.heart_rate < 60) score -= Math.max(0, (60 - latest.heart_rate) * 0.5);
+    if (latest.body_temperature > 37.5) score -= Math.max(0, (latest.body_temperature - 37.5) * 8);
+    return Math.max(0, Math.min(100, Math.round(score)));
+  })();
+
   return (
     <section className="hero-panel gradient-border neon-glow" aria-label="Active patient overview">
       <div className="hero-scanline" aria-hidden="true" />
@@ -82,9 +95,7 @@ export default memo(function HeroPanel({
         <div className="hero-stat-grid">
           <div className="hero-stat-card hero-stat-card-live">
             <span>Current state</span>
-            <strong>
-              {liveState}
-            </strong>
+            <strong>{liveState}</strong>
           </div>
           <div className="hero-stat-card">
             <span>Telemetry heartbeat</span>
@@ -106,6 +117,7 @@ export default memo(function HeroPanel({
         </div>
       </div>
       <div className="hero-actions">
+        <AIHealthScore score={healthScore} prediction={latest?.prediction} />
         <button
           className={`primary-button ripple-button shimmer-button ${buttonStates.activate ? 'btn-response-success' : ''}`}
           onClick={() => handleButtonClick('activate', onActivate)}
@@ -134,10 +146,8 @@ export default memo(function HeroPanel({
           Export report
         </button>
         <div className="shortcut-hint" style={{ width: '100%', marginTop: '4px', justifyContent: 'flex-end' }}>
-          <kbd>D</kbd> Dashboard
-          <kbd>W</kbd> Ward
-          <kbd>R</kbd> Reports
-          <kbd>S</kbd> Settings
+          <kbd>/</kbd> Search patients
+          <kbd>1-9</kbd> Quick select
         </div>
       </div>
     </section>

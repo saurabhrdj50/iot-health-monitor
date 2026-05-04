@@ -22,13 +22,13 @@ export default function WardOverviewPanel({ overviewPatients, selectedPatientId,
           <p className="eyebrow">Ward Overview</p>
           <h3>Multi-Patient Snapshot</h3>
         </div>
-        <BedDouble className="h-5 w-5 text-cyan-200" />
+        <BedDouble className="h-5 w-5" style={{ color: 'var(--accent)' }} />
       </div>
 
       <div className="ward-summary">
         <span>{overviewPatients.length} patients loaded</span>
         <span>{liveCount} streaming now</span>
-        <span>{criticalCount} critical states</span>
+        {criticalCount > 0 && <span style={{ color: 'var(--danger)' }}>{criticalCount} critical</span>}
       </div>
 
       <div className="ward-grid">
@@ -51,7 +51,7 @@ export default function WardOverviewPanel({ overviewPatients, selectedPatientId,
                 {patient.latest_prediction || 'No data'}
               </span>
             </div>
-            <p>{patient.room || 'Room pending'} • {patient.doctor || 'Unassigned'}</p>
+            <p>{patient.room || 'Room pending'} · {patient.doctor || 'Unassigned'}</p>
             <div className="ward-metrics">
               <span>HR {patient.latest_heart_rate ? Math.round(patient.latest_heart_rate) : '--'}</span>
               <span>SpO2 {patient.latest_spo2 ? Math.round(patient.latest_spo2) : '--'}%</span>

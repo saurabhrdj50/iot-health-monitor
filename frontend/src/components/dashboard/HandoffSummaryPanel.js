@@ -19,7 +19,7 @@ export default function HandoffSummaryPanel({ summary }) {
           <p className="eyebrow">Shift Handoff</p>
           <h3>Clinician Summary</h3>
         </div>
-        <ClipboardList className="h-5 w-5 text-cyan-200" />
+        <ClipboardList className="h-5 w-5" style={{ color: 'var(--accent)' }} />
       </div>
       <div className="handoff-panel">
         <strong>{summary.headline}</strong>

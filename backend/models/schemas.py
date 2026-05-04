@@ -14,7 +14,7 @@ class HealthStatusEnum(str, Enum):
 
 class VitalSignsInput(BaseModel):
     heart_rate: float = Field(..., ge=30, le=250, description="Heart rate in BPM")
-    respiratory_rate: float = Field(..., ge=5, le=40, description="Respiratory rate per minute")
+    respiratory_rate: Optional[float] = Field(default=None, ge=5, le=40, description="Respiratory rate per minute when available")
     body_temperature: Optional[float] = Field(default=None, ge=25, le=45, description="Body temperature in Celsius")
     spo2: float = Field(..., ge=70, le=100, description="Oxygen saturation percentage")
     gsr: Optional[float] = Field(default=None, description="Galvanic skin response")
@@ -99,7 +99,7 @@ class VitalSignsResponse(BaseModel):
     patient_id: Optional[int] = None
     patient_name: Optional[str] = None
     heart_rate: float
-    respiratory_rate: float
+    respiratory_rate: Optional[float] = None
     body_temperature: Optional[float] = None
     spo2: float
     gsr: Optional[float] = None

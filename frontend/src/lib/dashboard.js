@@ -150,9 +150,9 @@ export function buildInsights(history, latest, patient) {
   const hrDelta = Math.round(getMetricDelta(history, 'heart_rate') || 0);
   const spo2Delta = Math.round(getMetricDelta(history, 'spo2') || 0);
   const tempDeltaRaw = getMetricDelta(history, 'body_temperature') || 0;
+  const gsrDelta = getMetricDelta(history, 'gsr');
   const tempDelta = tempDeltaRaw.toFixed(1);
   const recentSpo2Average = average(recentWindow.map((item) => item.spo2));
-  const recentRespAverage = average(recentWindow.map((item) => item.respiratory_rate));
   const anomalyCount = recentWindow.filter((item) => item.anomaly_flag).length;
 
   let recommendation = 'Trends are within the expected envelope for the recent observation window.';
@@ -160,8 +160,8 @@ export function buildInsights(history, latest, patient) {
     recommendation = 'SpO2 is declining across recent readings. Check airway support, probe quality, and escalation criteria.';
   } else if (hrDelta >= 12) {
     recommendation = 'Heart rate is trending upward. Reassess pain, exertion, and hemodynamic stability.';
-  } else if (recentRespAverage !== null && recentRespAverage > 20) {
-    recommendation = 'Respiratory rate remains elevated. Review work of breathing and oxygenation response.';
+  } else if (typeof gsrDelta === 'number' && gsrDelta <= -40) {
+    recommendation = 'GSR resistance is dropping across recent readings. Recheck electrode contact and correlate with patient stress context.';
   } else if (anomalyCount >= 2) {
     recommendation = 'Repeated anomaly flags detected. Consider closer observation and device placement verification.';
   }
@@ -180,6 +180,10 @@ export function buildInsights(history, latest, patient) {
       value: `${tempDeltaRaw >= 0 ? '+' : ''}${tempDelta} deg C shift from earliest reading`,
     },
     {
+      label: 'GSR Drift',
+      value: typeof gsrDelta === 'number' ? `${gsrDelta >= 0 ? '+' : ''}${gsrDelta.toFixed(1)} kOhm shift` : 'Waiting for more GSR samples',
+    },
+    {
       label: 'Care Suggestion',
       value: recommendation,
     },
@@ -196,7 +200,7 @@ export function buildRecommendations(history, latest) {
   const recent = history.slice(-5);
   const spo2Average = average(recent.map((item) => item.spo2));
   const hrAverage = average(recent.map((item) => item.heart_rate));
-  const respAverage = average(recent.map((item) => item.respiratory_rate));
+  const gsrDelta = getMetricDelta(recent, 'gsr');
   const recommendations = [];
 
   if (spo2Average !== null && spo2Average < 95) {
@@ -215,11 +219,11 @@ export function buildRecommendations(history, latest) {
       tone: 'watch',
     });
   }
-  if (respAverage !== null && respAverage > 20) {
+  if (typeof gsrDelta === 'number' && gsrDelta <= -40) {
     recommendations.push({
-      id: 'resp-elevated',
-      title: 'Respiratory burden check',
-      body: `Respiratory rate averages ${respAverage.toFixed(1)} /min. Review work of breathing and oxygen response.`,
+      id: 'gsr-shift',
+      title: 'GSR electrode and stress check',
+      body: `Skin resistance changed by ${gsrDelta.toFixed(1)} kOhm across the recent window. Verify electrode contact and clinical context.`,
       tone: 'watch',
     });
   }
@@ -252,7 +256,7 @@ export function buildReportRows(history) {
       Math.round(row.heart_rate).toString(),
       `${Math.round(row.spo2)}%`,
       row.body_temperature !== null && row.body_temperature !== undefined ? `${row.body_temperature.toFixed(1)} deg C` : '-',
-      row.respiratory_rate.toFixed(1),
+      row.gsr !== null && row.gsr !== undefined ? `${row.gsr.toFixed(1)} kOhm` : '-',
       row.prediction || 'Unknown',
     ];
   });
@@ -307,7 +311,7 @@ export function buildKpis(latest) {
     { key: 'heart_rate', label: 'Heart Rate', value: latest?.heart_rate, unit: 'BPM', digits: 0, tone: latest?.heart_rate > 100 || latest?.heart_rate < 60 ? 'alert' : 'normal' },
     { key: 'spo2', label: 'Blood Oxygen', value: latest?.spo2, unit: '%', digits: 0, tone: latest?.spo2 < 95 ? 'alert' : 'normal' },
     { key: 'body_temperature', label: 'Temperature', value: latest?.body_temperature, unit: 'deg C', digits: 1, tone: latest?.body_temperature > 37.5 ? 'alert' : 'normal' },
-    { key: 'respiratory_rate', label: 'Respiration', value: latest?.respiratory_rate, unit: '/min', digits: 1, tone: latest?.respiratory_rate > 20 || latest?.respiratory_rate < 12 ? 'alert' : 'normal' },
+    { key: 'gsr', label: 'GSR Resistance', value: latest?.gsr, unit: 'kOhm', digits: 1, tone: 'normal' },
   ];
 }
 
@@ -409,16 +413,16 @@ export function buildReferenceKpis(latest) {
     },
     {
       key: 'gsr',
-      label: 'Skin Conductance (GSR)',
-      subtitle: 'Galvanic skin response',
+      label: 'Skin Resistance (GSR)',
+      subtitle: 'Galvanic skin resistance',
       value: latest?.gsr,
-      unit: 'uS',
+      unit: 'kOhm',
       digits: 1,
-      tone: latest?.gsr > 30 ? 'alert' : 'normal',
-      status: latest?.gsr > 30 ? 'ACTIVE' : 'NORMAL',
+      tone: 'normal',
+      status: latest?.gsr !== null && latest?.gsr !== undefined ? 'LIVE' : 'WAITING',
       accent: 'pink',
       scaleMin: 0,
-      scaleMax: 100,
+      scaleMax: 600,
     },
   ];
 }

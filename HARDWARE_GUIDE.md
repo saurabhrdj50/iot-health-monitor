@@ -8,7 +8,7 @@
 | MAX30102 | SCL | D1 | I2C clock |
 | MAX30102 | VIN | 3.3V | Use a 3.3V-safe breakout |
 | MAX30102 | GND | GND | Shared ground |
-| DS18B20 | DATA | D5 | OneWire bus |
+| DS18B20 | DATA | D4 | OneWire bus |
 | DS18B20 | VCC | 3.3V | Shared rail |
 | DS18B20 | GND | GND | Shared ground |
 | DS18B20 | 4.7k resistor | DATA to 3.3V | Required pull-up |

@@ -15,8 +15,8 @@ Open PowerShell and run:
 cd C:\Users\gupta\Desktop\iot-health-monitor
 
 # Create and activate virtual environment
-py -3.12 -m venv .venv312
-.\.venv312\Scripts\activate
+py -3.12 -m venv .venv
+.\.venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
@@ -25,7 +25,7 @@ pip install -r requirements.txt
 ### Step 2: Train ML Model (required first time only)
 
 ```powershell
-.\.venv312\Scripts\python.exe -m ml.training_pipeline
+.\.venv\Scripts\python.exe -m ml.training_pipeline
 ```
 
 This creates the model files in `models/`:
@@ -37,12 +37,12 @@ This creates the model files in `models/`:
 
 ```powershell
 $env:IHM_ADMIN_TOKEN="bhjsy572877tb_YH8u87_678bu"
-.\.venv312\Scripts\python.exe -m backend.main
+.\.venv\Scripts\python.exe -m backend.main
 ```
 
 Verify it works:
 ```powershell
-curl http://127.0.0.1:8000/status
+curl http://localhost:8000/status
 ```
 
 ### Step 4: Start Frontend

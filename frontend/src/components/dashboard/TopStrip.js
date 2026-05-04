@@ -6,12 +6,15 @@ export default memo(function TopStrip({ latest, dashboard, health }) {
   const tone = getRiskTone(latest?.prediction);
   const confidence = latest?.probability ? Math.round(Math.max(...Object.values(latest.probability)) * 100) : 0;
 
+  const toneIcon = latest?.prediction === 'Risk' ? ShieldAlert : latest?.prediction === 'Stress' ? AlertCircle : CheckCircle2;
+  const ToneIcon = toneIcon;
+
   return (
     <section className="top-strip">
       <div className={`signal-banner signal-${tone}`}>
         <div className="signal-title">
           <span className="live-pulse-dot" aria-hidden="true" />
-          {latest?.prediction === 'Risk' ? <ShieldAlert className="h-5 w-5" /> : latest?.prediction === 'Stress' ? <AlertCircle className="h-5 w-5" /> : <CheckCircle2 className="h-5 w-5" />}
+          <ToneIcon className="h-5 w-5" />
           <span>{latest?.prediction || 'Awaiting telemetry'}</span>
         </div>
         <p>{latest ? `Last updated ${formatDateTime(dashboard.updated_at)}` : 'The device feed has not delivered a reading for this patient yet.'}</p>
@@ -22,7 +25,7 @@ export default memo(function TopStrip({ latest, dashboard, health }) {
       </div>
 
       <div className="mini-stat">
-        <Cpu className="h-5 w-5" />
+        <Cpu className="h-5 w-5" style={{ color: 'var(--accent)' }} />
         <div>
           <p className="eyebrow">Inference Model</p>
           <strong>{dashboard.model_loaded ? 'Loaded' : 'Fallback Rules'}</strong>
@@ -31,7 +34,7 @@ export default memo(function TopStrip({ latest, dashboard, health }) {
       </div>
 
       <div className="mini-stat">
-        <Sparkles className="h-5 w-5" />
+        <Sparkles className="h-5 w-5" style={{ color: 'var(--warning)' }} />
         <div>
           <p className="eyebrow">Prediction Confidence</p>
           <strong>{confidence ? `${confidence}%` : 'N/A'}</strong>

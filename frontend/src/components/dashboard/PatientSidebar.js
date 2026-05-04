@@ -1,13 +1,6 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Cpu, FileText, LayoutDashboard, Loader2, Plus, Radio, Search, Settings, ShieldCheck, Users } from 'lucide-react';
-
-const navItems = [
-  { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { key: 'ward', label: 'Ward', icon: Users },
-  { key: 'reports', label: 'Reports', icon: FileText },
-  { key: 'settings', label: 'Settings', icon: Settings },
-];
+import { Cpu, Loader2, Plus, Radio, Search, ShieldCheck, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const patientCardVariants = {
   hidden: { opacity: 0, y: 6 },
@@ -31,11 +24,8 @@ export default function PatientSidebar({
   health,
   dashboard,
   overviewPatients,
-  currentRoute,
-  onNavigate,
-  themeModes = [],
-  currentThemeMode,
-  onThemeModeChange,
+  sidebarCollapsed,
+  onToggleSidebar,
 }) {
   const activeAlerts = overviewPatients.filter((patient) => patient.latest_prediction === 'Risk').length;
   const streamingPatients = overviewPatients.filter((patient) => patient.latest_timestamp).length;
@@ -43,6 +33,26 @@ export default function PatientSidebar({
 
   return (
     <aside className="sidebar-panel" aria-label="Patient navigation and roster">
+      {!sidebarCollapsed && (
+        <button
+          className="sidebar-collapse-btn"
+          onClick={onToggleSidebar}
+          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+        </button>
+      )}
+      {sidebarCollapsed && (
+        <button
+          className="sidebar-collapse-btn"
+          style={{ right: '-14px', top: '12px' }}
+          onClick={onToggleSidebar}
+          aria-label="Expand sidebar"
+        >
+          <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+      )}
+
       <motion.div
         className="brand-block"
         initial={{ opacity: 0, x: -10 }}
@@ -90,33 +100,11 @@ export default function PatientSidebar({
         <div className="ops-mini-card">
           <Cpu className="h-4 w-4" />
           <div>
-            <span>Streaming Patients</span>
+            <span>Streaming</span>
             <strong>{streamingPatients}</strong>
           </div>
         </div>
       </motion.div>
-
-        <nav className="sidebar-nav" aria-label="Workspace sections">
-          {navItems.map((item, index) => {
-            const Icon = item.icon;
-            return (
-              <motion.button
-                key={item.key}
-                className={`nav-item neon-glow ${currentRoute === item.key ? 'nav-item-active' : ''}`}
-                onClick={() => onNavigate(item.key)}
-                aria-current={currentRoute === item.key ? 'page' : undefined}
-                initial={{ opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.05 * index, duration: 0.25 }}
-                whileHover={{ x: 3 }}
-                whileTap={{ scale: 0.98 }}
-              >
-                <Icon className="h-4 w-4" />
-                {item.label}
-              </motion.button>
-            );
-          })}
-        </nav>
 
       <motion.div
         className="sidebar-section"
@@ -126,23 +114,15 @@ export default function PatientSidebar({
       >
         <div className="section-row">
           <div>
-            <p className="eyebrow">Visual Mode</p>
-            <h2>Command Theme</h2>
+            <p className="eyebrow">Workspace Focus</p>
+            <h2>Single Clear Dashboard</h2>
           </div>
         </div>
         <div className="theme-mode-grid">
-          {themeModes.map((mode) => (
-            <motion.button
-              key={mode.key}
-              className={`theme-mode-card ${currentThemeMode === mode.key ? 'theme-mode-card-active' : ''}`}
-              onClick={() => onThemeModeChange(mode.key)}
-              whileHover={{ y: -1 }}
-              whileTap={{ scale: 0.98 }}
-            >
-              <strong>{mode.label}</strong>
-              <span>{mode.description}</span>
-            </motion.button>
-          ))}
+          <div className="theme-mode-card theme-mode-card-active">
+            <strong>Everything in one place</strong>
+            <span>Telemetry, alerts, reports, ward view, and patient controls stay on one screen.</span>
+          </div>
         </div>
       </motion.div>
 
@@ -172,7 +152,7 @@ export default function PatientSidebar({
 
         <div className="search-shell" role="search">
           <label className="sr-only" htmlFor="patient-search">Search patients</label>
-          <Search className="h-4 w-4 text-cyan-200/80" />
+          <Search className="h-4 w-4" style={{ color: 'var(--accent)', opacity: 0.7 }} />
           <input
             id="patient-search"
             value={search}

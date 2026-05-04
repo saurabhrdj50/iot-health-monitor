@@ -1,5 +1,5 @@
-import React, { memo } from 'react';
-import { Activity, Thermometer, TrendingUp, Wind } from 'lucide-react';
+import React, { memo, useState } from 'react';
+import { Activity, Thermometer, TrendingUp, Zap, Maximize2 } from 'lucide-react';
 import {
   Area,
   CartesianGrid,
@@ -14,12 +14,13 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import TimeFilterBar from './TimeFilterBar';
 
 const metricConfig = {
-  heart_rate: { label: 'Heart Rate', color: '#3EE8FF', compareColor: '#FF4FD8', band: [60, 100], icon: TrendingUp, unit: 'BPM', thresholdLabel: 'Preferred band' },
-  spo2: { label: 'SpO2', color: '#3CFFB6', compareColor: '#3EE8FF', band: [95, 100], icon: Activity, unit: '%', thresholdLabel: 'Safe oxygen band' },
-  body_temperature: { label: 'Temperature', color: '#FFC857', compareColor: '#8A5CFF', band: [36.0, 37.5], icon: Thermometer, unit: '°C', thresholdLabel: 'Expected range' },
-  respiratory_rate: { label: 'Respiration', color: '#8A5CFF', compareColor: '#3CFFB6', band: [12, 20], icon: Wind, unit: '/min', thresholdLabel: 'Target band' },
+  heart_rate: { label: 'Heart Rate', color: '#fb7185', compareColor: '#a78bfa', band: [60, 100], icon: TrendingUp, unit: 'BPM', thresholdLabel: 'Preferred band' },
+  spo2: { label: 'SpO2', color: '#00e5ff', compareColor: '#10b981', band: [95, 100], icon: Activity, unit: '%', thresholdLabel: 'Safe oxygen band' },
+  body_temperature: { label: 'Temperature', color: '#fbbf24', compareColor: '#8b5cf6', band: [36.0, 37.5], icon: Thermometer, unit: '°C', thresholdLabel: 'Expected range' },
+  gsr: { label: 'GSR Resistance', color: '#8b5cf6', compareColor: '#10b981', band: [150, 450], icon: Zap, unit: 'kOhm', thresholdLabel: 'Typical device band' },
 };
 
 function ActiveDot(props) {
@@ -27,9 +28,9 @@ function ActiveDot(props) {
   if (!payload?.anomaly_flag) return <Dot {...props} r={0} />;
   return (
     <g>
-      <circle cx={cx} cy={cy} r={11} fill="rgba(255, 90, 122, 0.12)" />
-      <circle cx={cx} cy={cy} r={7} fill="rgba(255, 79, 216, 0.16)" />
-      <circle cx={cx} cy={cy} r={3.5} fill={stroke} />
+      <circle cx={cx} cy={cy} r={12} fill="rgba(244, 63, 94, 0.10)" />
+      <circle cx={cx} cy={cy} r={8} fill="rgba(244, 63, 94, 0.14)" />
+      <circle cx={cx} cy={cy} r={4} fill={stroke} />
     </g>
   );
 }
@@ -56,7 +57,7 @@ function TrendTooltip({ active, payload, label, metric, selectedMetric, compareM
   );
 }
 
-function TelemetryChartPanel({ history, loading, selectedMetric, onSelectMetric, compareMetric, onCompareMetricChange, compareMode, onToggleCompareMode }) {
+function TelemetryChartPanel({ history, loading, selectedMetric, onSelectMetric, compareMetric, onCompareMetricChange, compareMode, onToggleCompareMode, onExpand }) {
   const metric = metricConfig[selectedMetric];
   const compare = metricConfig[compareMetric];
   const values = history.map((point) => point[selectedMetric]).filter((value) => typeof value === 'number' && !Number.isNaN(value));
@@ -64,9 +65,25 @@ function TelemetryChartPanel({ history, loading, selectedMetric, onSelectMetric,
   const upper = metric.band[1];
   const minValue = values.length ? Math.min(...values, lower) : lower;
   const maxValue = values.length ? Math.max(...values, upper) : upper;
-  const padding = Math.max((maxValue - minValue) * 0.18, selectedMetric === 'body_temperature' ? 0.4 : 4);
+  const padding = Math.max((maxValue - minValue) * 0.18, selectedMetric === 'body_temperature' ? 0.4 : selectedMetric === 'gsr' ? 20 : 4);
   const anomalyCount = history.filter((item) => item.anomaly_flag).length;
   const latestPoint = history[history.length - 1];
+  const [timeRange, setTimeRange] = useState('24h');
+
+  const filteredHistory = (() => {
+    if (!history.length) return [];
+    const now = new Date();
+    let cutoff;
+    switch (timeRange) {
+      case '1h': cutoff = new Date(now.getTime() - 3600000); break;
+      case '6h': cutoff = new Date(now.getTime() - 21600000); break;
+      case '24h': cutoff = new Date(now.getTime() - 86400000); break;
+      case '7d': cutoff = new Date(now.getTime() - 604800000); break;
+      default: cutoff = new Date(now.getTime() - 86400000);
+    }
+    const filtered = history.filter((item) => new Date(item.timestamp) >= cutoff);
+    return filtered.length ? filtered : history;
+  })();
 
   return (
     <div className="panel chart-panel shimmer-surface">
@@ -75,6 +92,17 @@ function TelemetryChartPanel({ history, loading, selectedMetric, onSelectMetric,
           <p className="eyebrow">Telemetry Curve</p>
           <h3>Trend Analysis</h3>
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <TimeFilterBar activeRange={timeRange} onChange={setTimeRange} />
+          {onExpand && (
+            <button className="ghost-button small" onClick={onExpand} aria-label="Expand chart">
+              <Maximize2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="chart-toolbar">
         <div className="metric-switcher">
           {Object.entries(metricConfig).map(([key, item]) => {
             const Icon = item.icon;
@@ -86,24 +114,22 @@ function TelemetryChartPanel({ history, loading, selectedMetric, onSelectMetric,
             );
           })}
         </div>
-      </div>
-
-      <div className="chart-toolbar">
         <button className={`ghost-button small shimmer-button ${compareMode ? 'toolbar-button-active' : ''}`} onClick={onToggleCompareMode}>
           {compareMode ? 'Comparison on' : 'Compare metrics'}
         </button>
-        {compareMode ? (
-          <div className="compare-select-row">
-            {Object.entries(metricConfig)
-              .filter(([key]) => key !== selectedMetric)
-              .map(([key, item]) => (
-                <button key={key} className={`metric-pill shimmer-button ${compareMetric === key ? 'metric-pill-active' : ''}`} onClick={() => onCompareMetricChange(key)}>
-                  {item.label}
-                </button>
-              ))}
-          </div>
-        ) : null}
       </div>
+
+      {compareMode && (
+        <div className="compare-select-row" style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
+          {Object.entries(metricConfig)
+            .filter(([key]) => key !== selectedMetric)
+            .map(([key, item]) => (
+              <button key={key} className={`metric-pill shimmer-button ${compareMetric === key ? 'metric-pill-active' : ''}`} onClick={() => onCompareMetricChange(key)}>
+                {item.label}
+              </button>
+            ))}
+        </div>
+      )}
 
       <div className="chart-summary-bar">
         <div>
@@ -126,7 +152,7 @@ function TelemetryChartPanel({ history, loading, selectedMetric, onSelectMetric,
 
       <div className="chart-shell">
         <div className="chart-scanline" aria-hidden="true" />
-        {loading || history.length < 2 ? (
+        {loading || filteredHistory.length < 2 ? (
           <div className="empty-state telemetry-empty-state">
             <metric.icon className="h-6 w-6" />
             <strong>Trend view waiting on telemetry</strong>
@@ -134,25 +160,25 @@ function TelemetryChartPanel({ history, loading, selectedMetric, onSelectMetric,
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={history} margin={{ top: 20, right: 20, bottom: 8, left: 0 }}>
+            <ComposedChart data={filteredHistory} margin={{ top: 20, right: 20, bottom: 8, left: 0 }}>
               <defs>
                 <linearGradient id="metricStroke" x1="0" y1="0" x2="1" y2="0">
                   <stop offset="0%" stopColor={metric.color} />
-                  <stop offset="100%" stopColor="#8A5CFF" />
+                  <stop offset="100%" stopColor="#8b5cf6" />
                 </linearGradient>
                 <linearGradient id="metricFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={metric.color} stopOpacity={0.28} />
-                  <stop offset="100%" stopColor="#8A5CFF" stopOpacity={0.02} />
+                  <stop offset="0%" stopColor={metric.color} stopOpacity={0.24} />
+                  <stop offset="100%" stopColor="#8b5cf6" stopOpacity={0.02} />
                 </linearGradient>
               </defs>
-              <CartesianGrid stroke="rgba(157, 212, 228, 0.08)" vertical={false} />
-              <ReferenceArea y1={metric.band[0]} y2={metric.band[1]} fill="rgba(62, 232, 255, 0.08)" fillOpacity={1} />
-              <ReferenceLine y={metric.band[0]} stroke="rgba(211, 235, 242, 0.22)" strokeDasharray="4 4">
-                <Label value={metric.thresholdLabel} position="insideTopLeft" fill="rgba(211, 235, 242, 0.7)" fontSize={12} />
+              <CartesianGrid stroke="rgba(148, 191, 219, 0.06)" vertical={false} />
+              <ReferenceArea y1={metric.band[0]} y2={metric.band[1]} fill="rgba(0, 229, 255, 0.06)" fillOpacity={1} />
+              <ReferenceLine y={metric.band[0]} stroke="rgba(148, 191, 219, 0.18)" strokeDasharray="4 4">
+                <Label value={metric.thresholdLabel} position="insideTopLeft" fill="rgba(148, 191, 219, 0.6)" fontSize={11} />
               </ReferenceLine>
-              <ReferenceLine y={metric.band[1]} stroke="rgba(211, 235, 242, 0.22)" strokeDasharray="4 4" />
-              <XAxis dataKey="timeLabel" tickLine={false} axisLine={false} stroke="#8fb6c4" />
-              <YAxis tickLine={false} axisLine={false} stroke="#8fb6c4" domain={[minValue - padding, maxValue + padding]} width={54} />
+              <ReferenceLine y={metric.band[1]} stroke="rgba(148, 191, 219, 0.18)" strokeDasharray="4 4" />
+              <XAxis dataKey="timeLabel" tickLine={false} axisLine={false} stroke="#6b8fa8" tick={{ fontSize: 11 }} />
+              <YAxis tickLine={false} axisLine={false} stroke="#6b8fa8" domain={[minValue - padding, maxValue + padding]} width={50} tick={{ fontSize: 11 }} />
               <Tooltip content={<TrendTooltip metric={metric} selectedMetric={selectedMetric} compareMetric={compareMetric} compareMode={compareMode} />} />
               <Area
                 type="monotone"

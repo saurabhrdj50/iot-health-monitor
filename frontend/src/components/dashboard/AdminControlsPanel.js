@@ -16,12 +16,12 @@ export default function AdminControlsPanel({
           <p className="eyebrow">Secure Controls</p>
           <h3>Protected Reset</h3>
         </div>
-        <ShieldAlert className="h-5 w-5 text-amber-200" />
+        <ShieldAlert className="h-5 w-5" style={{ color: 'var(--warning)' }} />
       </div>
       <p className="panel-copy">
         Destructive telemetry reset requires the shared admin token. Set <code>IHM_ADMIN_TOKEN</code> in the backend environment for production use.
       </p>
-      <div className="admin-warning-chip">Restricted action • patient history will be deleted</div>
+      <div className="admin-warning-chip">Restricted action · patient history will be deleted</div>
       <div className="admin-row">
         <input type="password" value={adminToken} onChange={(event) => onAdminTokenChange(event.target.value)} placeholder="Enter admin token" />
         <motion.button

@@ -40,6 +40,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 DEFAULT_BODY_TEMPERATURE = 36.8
+DEFAULT_RESPIRATORY_RATE = 16.0
 inference_engine = None
 
 try:
@@ -64,13 +65,13 @@ def _fallback_prediction(data: Dict[str, Any]) -> Dict[str, Any]:
     hr = float(data["heart_rate"])
     spo2 = float(data["spo2"])
     temp = float(data["body_temperature"]) if data.get("body_temperature") is not None else DEFAULT_BODY_TEMPERATURE
-    rr = float(data["respiratory_rate"])
+    rr = float(data["respiratory_rate"]) if data.get("respiratory_rate") is not None else DEFAULT_RESPIRATORY_RATE
 
-    if hr < 60 or hr > 100 or spo2 < 94 or temp > 37.5 or temp < 36.0 or rr < 12 or rr > 20:
+    if hr < 50 or hr > 120 or spo2 < 90 or temp > 38.5 or temp < 35.0 or rr < 10 or rr > 30:
         prediction = "Risk"
         confidence = 0.82
         probability = {"Normal": 0.10, "Stress": 0.28, "Risk": 0.62}
-    elif hr > 85 or hr < 65 or spo2 < 96 or temp > 37.2 or temp < 36.5:
+    elif hr < 60 or hr > 100 or spo2 < 95 or temp > 37.5 or temp < 36.1 or rr < 12 or rr > 20:
         prediction = "Stress"
         confidence = 0.74
         probability = {"Normal": 0.24, "Stress": 0.58, "Risk": 0.18}
@@ -96,6 +97,7 @@ def _fallback_prediction(data: Dict[str, Any]) -> Dict[str, Any]:
             "scaler_loaded": False,
             "fallback_mode": True,
             "temperature_inferred": data.get("body_temperature") is None,
+            "respiratory_rate_estimated": data.get("respiratory_rate") is None,
             "patient_id": data.get("patient_id"),
         },
     }
@@ -130,7 +132,7 @@ def process_vital_signs(
     snapshot = {
         "patient_id": normalized["patient_id"],
         "heart_rate": float(normalized["heart_rate"]),
-        "respiratory_rate": float(normalized["respiratory_rate"]),
+        "respiratory_rate": None if normalized.get("respiratory_rate") is None else float(normalized["respiratory_rate"]),
         "body_temperature": None if normalized.get("body_temperature") is None else float(normalized["body_temperature"]),
         "spo2": float(normalized["spo2"]),
         "gsr": None if normalized.get("gsr") is None else float(normalized["gsr"]),
